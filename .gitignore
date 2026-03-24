@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.env/
+
+# OS files
+.DS_Store
+
+# Logs
+*.log
+
+# Docker
+*.pid
+
+# IDE
+.vscode/
+.idea/
+
+# Data (optional)
+*.csv
+*.json
