@@ -1,1 +1,2 @@
-kafka-python>=2.3.0
+kafka-python>=2.3.0,<3.0
+mmh3>=4.0.0

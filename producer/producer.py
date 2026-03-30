@@ -1,40 +1,85 @@
 # producer/producer.py
 
 from kafka import KafkaProducer
+from shared.config import KAFKA_BROKER, TOPIC_NAME, BATCH_SIZE, BUFFER_MEMORY, LINGER_MS, SAMPLE_SIZE
 import json
 import time
+import csv
+import logging
 
-# Kafka configuration
-KAFKA_BROKER = 'localhost:9092'  # the local port where the communications are happening
-TOPIC_NAME = 'documents' #name of the channel where the messages will go
+from kafka.errors import NoBrokersAvailable
 
-# Test document to see if everything works
-documents = [
-    {"id": 1, "text": "This is the first document."},
-    {"id": 2, "text": "Here is the second document."},
-    {"id": 3, "text": "And a third one."},
-]
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | PRODUCER | %(levelname)s | %(message)s"
+)
 
-def json_serializer(data):  # Kafka only sends bytes so we have to convert everything first
+def json_serializer(data):
     return json.dumps(data).encode('utf-8')
 
 def main():
-    # Create producer and we set it up with our parameters
     producer = KafkaProducer(
         bootstrap_servers=KAFKA_BROKER,
-        value_serializer=json_serializer
+        value_serializer=json_serializer,
+        batch_size=BATCH_SIZE,
+        buffer_memory=BUFFER_MEMORY,
+        linger_ms=LINGER_MS,
+        retries=3,
+        acks=1,
     )
 
-    print(f"Sending {len(documents)} documents to topic '{TOPIC_NAME}'...")
-    
-    for doc in documents:
-        producer.send(TOPIC_NAME, doc)
-        print(f"Sent: {doc}")
-        time.sleep(1)  # small delay for demonstration
+    if SAMPLE_SIZE > 0:
+        logging.info(f"Running in SAMPLE MODE: processing first {SAMPLE_SIZE} rows")
+    else:
+        logging.info("Producer started. Beginning CSV stream...")
 
-    # # Ensure all queued messages are delivered to Kafka before exiting
+    with open("data/nyt-comments-part0.csv", newline="") as csvfile:
+        reader = csv.DictReader(csvfile)
+
+        for i, row in enumerate(reader):
+            if SAMPLE_SIZE > 0 and i >= SAMPLE_SIZE:
+                break
+
+            doc = {
+                "id": int(row["commentID"]),
+                "text": row["commentBody"],
+            }
+
+            try:
+                producer.send(
+                    TOPIC_NAME,
+                    key=str(row["userID"]).encode("utf-8"),
+                    value=doc
+                )
+
+                if i % 1000 == 0:
+                    logging.info(f"Sent {i} documents...")
+
+            except Exception as e:
+                logging.error(f"Failed to send document id={doc['id']} | error={e}")
+
+
     producer.flush()
-    print("All documents sent!")
+    if SAMPLE_SIZE > 0:
+        logging.info(f"Finished streaming {SAMPLE_SIZE} sampled documents.")
+    else:
+        logging.info("Finished streaming CSV.")
+    
+def wait_for_kafka():
+    logging.info("Waiting for Kafka...")
+
+    for i in range(20):
+        try:
+            KafkaProducer(bootstrap_servers=KAFKA_BROKER)
+            logging.info("Kafka is ready!")
+            return
+        except NoBrokersAvailable:
+            logging.warning(f"Kafka not ready yet... retry {i+1}/20")
+            time.sleep(2)
+
+    logging.error("Kafka never became available")
+    raise Exception("Kafka never became available")
 
 if __name__ == "__main__":
+    wait_for_kafka()
     main()

@@ -17,6 +17,9 @@ venv/
 # Docker
 *.pid
 
+# SSL/TLS certificates (if used)
+certs/
+
 # IDE
 .vscode/
 .idea/
