@@ -9,19 +9,19 @@ The system uses **Kafka streaming** to process comments in real-time, **LSH** fo
 ## Architecture
 
 ```
-                    ┌─────────────┐
-   CSV File         │   Kafka     │         ┌───────────┐
-    ───────►        │   Cluster   │         │  SQLite   │
-                    │ ┌─────────┐ │         │ Database  │
-┌──────────┐        │ │ kafka-0 │ │         │           │
-│ Producer │───────►│ │ kafka-1 │ │────┐    │ similarities│
-└──────────┘        │ └─────────┘ │    │    │   table   │
-                    └─────────────┘    │    └───────────┘
-                                        │          ▲
-                   ┌────────┬────────┬────────┐  │
-                   │Consumer│Consumer│Consumer│  │
-                   │   -1   │   -2   │   -3   │──┴──────────┘
-                   └────────┴────────┴────────┘
+                     ┌─────────────┐
+    CSV File          │   Kafka     │         ┌───────────┐     ┌─────────┐
+     ───────►         │   Cluster   │         │  SQLite   │     │   S3    │
+                     │ ┌─────────┐ │         │ Database  │     │  Bucket │
+┌──────────┐        │ │ kafka-0 │ │         │           │     │         │
+│ Producer │───────►│ │ kafka-1 │ │────┐    │ similarities│   │documents│
+└──────────┘        │ └─────────┘ │    │    │   table   │    │         │
+                     └─────────────┘    │    └───────────┘    └─────────┘
+                                         │          ▲           ▲
+                    ┌────────┬────────┬────────┐  │           │
+                    │Consumer│Consumer│Consumer│──┴───────────┘
+                    │   -1   │   -2   │   -3   │
+                    └────────┴────────┴────────┘
 ```
 
 ## Key Features
@@ -77,6 +77,24 @@ This approach avoids comparing every document pair (O(n²)) by only comparing do
 
 ### Prerequisites
 - Docker and Docker Compose installed
+- AWS account (optional, for S3 document storage)
+
+### AWS Credentials
+
+To enable S3 document storage, create a `.env` file in the project root:
+```bash
+cp .env.template .env
+```
+
+Then edit `.env` and add your AWS credentials:
+```bash
+AWS_ACCESS_KEY_ID=your_access_key_id
+AWS_SECRET_ACCESS_KEY=your_secret_access_key
+AWS_REGION=eu-north-1
+S3_BUCKET=your-bucket-name
+```
+
+The S3 writer is optional - if credentials are not set, documents will only be stored in the local SQLite database.
 
 ### Run All Services
 ```bash
@@ -118,6 +136,10 @@ docker-compose down
 |----------|---------|-------------|
 | `KAFKA_BROKER` | `kafka:9092` | Kafka broker address |
 | `SAMPLE_SIZE` | `30000` | Rows to process (0 = all) |
+| `AWS_ACCESS_KEY_ID` | - | AWS access key (optional) |
+| `AWS_SECRET_ACCESS_KEY` | - | AWS secret key (optional) |
+| `AWS_REGION` | `us-east-1` | AWS region |
+| `S3_BUCKET` | `kafka-stream-project-ulysse` | S3 bucket name |
 
 ### Algorithm Parameters (in `shared/config.py`)
 
@@ -144,8 +166,9 @@ Kafka-document-streaming/
 ├── requirements.txt         # Python dependencies
 ├── .gitignore
 │
-├── producer/                # CSV → Kafka
-│   ├── producer.py         # Reads CSV, streams to Kafka
+├── producer/                # CSV → Kafka + S3
+│   ├── main.py             # Reads CSV, streams to Kafka and S3
+│   ├── s3_writer.py        # S3 document uploader
 │   └── Dockerfile
 │
 ├── consumer/                # Kafka → LSH → Similarity
@@ -158,7 +181,8 @@ Kafka-document-streaming/
 │   └── preprocess.py        # Text preprocessing & k-shingling
 │
 ├── shared/
-│   └── config.py           # All configuration constants
+│   ├── config.py           # Kafka and algorithm configuration
+│   └── s3_config.py       # AWS S3 configuration
 │
 ├── database/
 │   └── database.py         # SQLite storage for similarities

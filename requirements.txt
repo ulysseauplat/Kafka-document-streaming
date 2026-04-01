@@ -1,2 +1,4 @@
 kafka-python>=2.3.0,<3.0
 mmh3>=4.0.0
+boto3>=1.34.0
+python-dotenv>=1.0.0

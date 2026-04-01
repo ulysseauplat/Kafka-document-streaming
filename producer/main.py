@@ -1,7 +1,6 @@
-# producer/producer.py
-
 from kafka import KafkaProducer
 from shared.config import KAFKA_BROKER, TOPIC_NAME, BATCH_SIZE, BUFFER_MEMORY, LINGER_MS, SAMPLE_SIZE
+from producer.s3_writer import S3Writer
 import json
 import time
 import csv
@@ -14,8 +13,10 @@ logging.basicConfig(
     format="%(asctime)s | PRODUCER | %(levelname)s | %(message)s"
 )
 
+
 def json_serializer(data):
     return json.dumps(data).encode('utf-8')
+
 
 def main():
     producer = KafkaProducer(
@@ -27,6 +28,8 @@ def main():
         retries=3,
         acks=1,
     )
+
+    s3_writer = S3Writer()
 
     if SAMPLE_SIZE > 0:
         logging.info(f"Running in SAMPLE MODE: processing first {SAMPLE_SIZE} rows")
@@ -45,12 +48,16 @@ def main():
                 "text": row["commentBody"],
             }
 
+            user_id = str(row["userID"])
+
             try:
                 producer.send(
                     TOPIC_NAME,
-                    key=str(row["userID"]).encode("utf-8"),
+                    key=user_id.encode("utf-8"),
                     value=doc
                 )
+
+                s3_writer.add(doc, user_id)
 
                 if i % 1000 == 0:
                     logging.info(f"Sent {i} documents...")
@@ -58,13 +65,15 @@ def main():
             except Exception as e:
                 logging.error(f"Failed to send document id={doc['id']} | error={e}")
 
-
     producer.flush()
+    s3_writer.close()
+
     if SAMPLE_SIZE > 0:
         logging.info(f"Finished streaming {SAMPLE_SIZE} sampled documents.")
     else:
         logging.info("Finished streaming CSV.")
-    
+
+
 def wait_for_kafka():
     logging.info("Waiting for Kafka...")
 
@@ -79,6 +88,7 @@ def wait_for_kafka():
 
     logging.error("Kafka never became available")
     raise Exception("Kafka never became available")
+
 
 if __name__ == "__main__":
     wait_for_kafka()
