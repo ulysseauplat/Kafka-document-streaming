@@ -83,7 +83,7 @@ This approach avoids comparing every document pair (O(n²)) by only comparing do
 
 To enable S3 document storage, create a `.env` file in the project root:
 ```bash
-cp .env.template .env
+cp .template .env
 ```
 
 Then edit `.env` and add your AWS credentials:
