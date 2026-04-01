@@ -4,9 +4,12 @@ __pycache__/
 *.pyo
 *.pyd
 
+# Environment files (contains secrets)
+.env
+.env/
+
 # Virtual environment
 venv/
-.env/
 
 # OS files
 .DS_Store
