@@ -1,6 +1,5 @@
 from kafka import KafkaProducer
 from shared.config import KAFKA_BROKER, TOPIC_NAME, BATCH_SIZE, BUFFER_MEMORY, LINGER_MS, SAMPLE_SIZE
-from producer.s3_writer import S3Writer
 import json
 import time
 import csv
@@ -29,8 +28,6 @@ def main():
         acks=1,
     )
 
-    s3_writer = S3Writer()
-
     if SAMPLE_SIZE > 0:
         logging.info(f"Running in SAMPLE MODE: processing first {SAMPLE_SIZE} rows")
     else:
@@ -46,18 +43,15 @@ def main():
             doc = {
                 "id": int(row["commentID"]),
                 "text": row["commentBody"],
+                "user_id": str(row["userID"]),
             }
-
-            user_id = str(row["userID"])
 
             try:
                 producer.send(
                     TOPIC_NAME,
-                    key=user_id.encode("utf-8"),
+                    key=doc["user_id"].encode("utf-8"),
                     value=doc
                 )
-
-                s3_writer.add(doc, user_id)
 
                 if i % 1000 == 0:
                     logging.info(f"Sent {i} documents...")
@@ -66,7 +60,6 @@ def main():
                 logging.error(f"Failed to send document id={doc['id']} | error={e}")
 
     producer.flush()
-    s3_writer.close()
 
     if SAMPLE_SIZE > 0:
         logging.info(f"Finished streaming {SAMPLE_SIZE} sampled documents.")

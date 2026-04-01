@@ -12,6 +12,7 @@ from shared.config import (
     SIMILARITY_THRESHOLD, PRIME, MAX_POLL_RECORDS, FETCH_MIN_BYTES,
     FETCH_MAX_WAIT_MS, SHINGLE_DICT_MAX_SIZE, SEEN_PAIRS_MAX_SIZE
 )
+from shared.s3_writer import S3Writer
 from database.database import init_db, insert_similarity
 
 
@@ -56,6 +57,8 @@ def main():
 
     init_db()
 
+    s3_writer = S3Writer()
+
     consumer = KafkaConsumer(
         TOPIC_NAME,
         bootstrap_servers=KAFKA_BROKER,
@@ -71,7 +74,6 @@ def main():
 
     logging.info("Listening for messages...")
 
-    # LSH config
     k = SHINGLE_SIZE
     n_hash = NUM_HASHES
     r = LSH_BANDS
@@ -104,6 +106,9 @@ def main():
 
         doc_id = doc.get("id")
         text = doc.get("text")
+        user_id = doc.get("user_id")
+
+        s3_writer.add(doc, user_id)
 
         logging.info(f"Received doc id={doc_id}")
 
@@ -118,7 +123,6 @@ def main():
         signature = compute_minhash_signature(shingles, hash_params, PRIME)
         lsh.insert(signature, doc_id)
 
-        # similarity check
         for i, j in lsh.candidate_pairs:
             pair = tuple(sorted((i, j)))
 
@@ -142,13 +146,11 @@ def main():
                     except Exception as e:
                         logging.error(f"DB insert failed {i}-{j}: {e}")
 
-        # MESSAGE LATENCY
         msg_duration = time.time() - msg_start
 
         if msg_duration > 1.0:
             logging.warning(f"SLOW MESSAGE id={doc_id} took {msg_duration:.3f}s")
 
-        # PERIODIC METRICS (every 10 sec)
         now = time.time()
 
         if now - last_log_time >= 10:
@@ -181,8 +183,8 @@ def main():
 
             if len(shingle_dict) > SHINGLE_DICT_MAX_SIZE:
                 keys_to_remove = sorted(shingle_dict.keys())[:len(shingle_dict) // 4]
-                for k in keys_to_remove:
-                    del shingle_dict[k]
+                for key in keys_to_remove:
+                    del shingle_dict[key]
 
             if len(seen_pairs) > SEEN_PAIRS_MAX_SIZE:
                 pairs_to_remove = list(seen_pairs)[:len(seen_pairs) // 4]
@@ -193,9 +195,10 @@ def main():
             logging.info(f"MEMORY CLEANUP | shingle_dict size={len(shingle_dict)} | seen_pairs size={len(seen_pairs)}")
 
         consumer.commit()
-    # FINAL SUMMARY
-    total_time = time.time() - start_time
 
+    s3_writer.close()
+
+    total_time = time.time() - start_time
 
     logging.info(
         f"Consumer stopped | "

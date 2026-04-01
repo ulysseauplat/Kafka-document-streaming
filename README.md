@@ -170,13 +170,12 @@ Kafka-document-streaming/
 ├── requirements.txt         # Python dependencies
 ├── .gitignore
 │
-├── producer/                # CSV → Kafka + S3
-│   ├── main.py             # Reads CSV, streams to Kafka and S3
-│   ├── s3_writer.py        # S3 document uploader
+├── producer/                # CSV → Kafka
+│   ├── main.py             # Reads CSV, streams to Kafka
 │   └── Dockerfile
 │
-├── consumer/                # Kafka → LSH → Similarity
-│   ├── consumer.py         # Main consumer with LSH processing
+├── consumer/                # Kafka → LSH → S3 + Similarity
+│   ├── consumer.py         # Main consumer with LSH + S3
 │   └── Dockerfile
 │
 ├── lsh/                     # Locality Sensitive Hashing
@@ -186,7 +185,8 @@ Kafka-document-streaming/
 │
 ├── shared/
 │   ├── config.py           # Kafka and algorithm configuration
-│   └── s3_config.py       # AWS S3 configuration
+│   ├── s3_config.py        # AWS S3 configuration
+│   └── s3_writer.py       # S3 document uploader
 │
 ├── database/
 │   └── database.py         # SQLite storage for similarities
