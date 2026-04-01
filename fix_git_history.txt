@@ -1,0 +1,11 @@
+# Run this command to remove .env from git history (including all branches and tags)
+
+git filter-branch --force --index-filter \
+  'git rm --cached --ignore-unmatch .env' \
+  --prune-empty --tag-name-filter cat -- --all
+
+# After running this, push with force:
+git push --force --all --tags
+
+# Then cleanup old reflog (optional):
+git reflog expire --expire=now --all && git gc --prune=now --aggressive
