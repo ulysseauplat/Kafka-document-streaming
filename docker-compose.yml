@@ -109,8 +109,8 @@ services:
         condition: service_completed_successfully
     environment:
       KAFKA_BROKER: "kafka-0:9092,kafka-1:9093"
-      SAMPLE_SIZE: "40"
-      CSV_FILE: "data/test-spam-dataset.csv"
+      SAMPLE_SIZE: "5000"
+      CSV_FILE: "data/nyt-comments-sorted.csv"
     volumes:
       - ./data:/app/data
     mem_limit: 512m

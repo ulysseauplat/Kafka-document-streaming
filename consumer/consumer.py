@@ -13,8 +13,8 @@ from database.database import (
     recalculate_user_stats,
     track_doc_user,
     update_consumer_stats,
-    update_user_stats_comment,
     update_system_latency,
+    update_user_stats_comment,
 )
 from lsh.lsh_index import LSHIndex
 from lsh.minhash import compute_minhash_signature, generate_hash_params
