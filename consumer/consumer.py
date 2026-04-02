@@ -1,42 +1,57 @@
-from kafka import KafkaConsumer
-import json
-import time
-import logging
 import gc
+import json
+import logging
 import os
+import time
+from typing import Any, Optional
 
-from lsh.preprocess import process_comment
-from lsh.minhash import generate_hash_params, compute_minhash_signature
+from kafka import KafkaConsumer
+
+from database.database import (
+    init_db,
+    insert_similarity,
+    recalculate_user_stats,
+    track_doc_user,
+    update_consumer_stats,
+    update_user_stats_comment,
+)
 from lsh.lsh_index import LSHIndex
+from lsh.minhash import compute_minhash_signature, generate_hash_params
+from lsh.preprocess import process_comment
 from shared.config import (
-    KAFKA_BROKER, TOPIC_NAME, SHINGLE_SIZE, NUM_HASHES, LSH_BANDS,
-    SIMILARITY_THRESHOLD, PRIME, MAX_POLL_RECORDS, FETCH_MIN_BYTES,
-    FETCH_MAX_WAIT_MS, SHINGLE_DICT_MAX_SIZE, SEEN_PAIRS_MAX_SIZE
+    FETCH_MAX_WAIT_MS,
+    FETCH_MIN_BYTES,
+    KAFKA_BROKER,
+    LSH_BANDS,
+    MAX_POLL_RECORDS,
+    NUM_HASHES,
+    PRIME,
+    SEEN_PAIRS_MAX_SIZE,
+    SHINGLE_DICT_MAX_SIZE,
+    SHINGLE_SIZE,
+    SIMILARITY_THRESHOLD,
+    TOPIC_NAME,
 )
 from shared.s3_writer import S3Writer
-from database.database import (
-    init_db, insert_similarity, 
-    track_doc_user, update_user_stats_comment,
-    update_consumer_stats, recalculate_user_stats
-)
-
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | CONSUMER | %(levelname)s | %(message)s"
 )
 
-CONSUMER_ID = int(os.getenv("CONSUMER_ID", "1"))
+CONSUMER_ID: int = int(os.getenv("CONSUMER_ID", "1"))
 
 
-def json_deserializer(data):
+def json_deserializer(data: bytes) -> dict[str, Any]:
     return json.loads(data.decode("utf-8"))
 
 
-def jaccard(set1, set2):
+def jaccard(set1: set[int], set2: set[int]) -> float:
     if not set1 or not set2:
         return 0.0
-    return len(set1 & set2) / len(set1 | set2)
+    intersection = len(set1 & set2)
+    union = len(set1 | set2)
+    return intersection / union if union > 0 else 0.0
 
 
 def wait_for_kafka():
@@ -82,26 +97,26 @@ def main():
 
     logging.info("Listening for messages...")
 
-    k = SHINGLE_SIZE
-    n_hash = NUM_HASHES
-    r = LSH_BANDS
+    k: int = SHINGLE_SIZE
+    n_hash: int = NUM_HASHES
+    r: int = LSH_BANDS
 
     hash_params = generate_hash_params(n_hash, PRIME)
     lsh = LSHIndex(r, n_hash // r)
 
-    shingle_dict = {}
-    seen_pairs = set()
+    shingle_dict: dict[int, set[int]] = {}
+    seen_pairs: set[tuple[int, int]] = set()
 
-    processed_count = 0
-    similarity_count = 0
-    cleanup_counter = 0
+    processed_count: int = 0
+    similarity_count: int = 0
+    cleanup_counter: int = 0
 
-    start_time = time.time()
-    last_log_time = time.time()
-    last_processed = 0
-    gc_interval = 500
+    start_time: float = time.time()
+    last_log_time: float = time.time()
+    last_processed: int = 0
+    gc_interval: int = 500
 
-    current_user = None
+    current_user: Optional[str] = None
 
     for message in consumer:
 

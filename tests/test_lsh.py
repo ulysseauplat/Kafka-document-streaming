@@ -1,8 +1,7 @@
-import pytest
-from lsh.preprocess import preprocess, get_word_shingles, process_comment
-from lsh.minhash import generate_hash_params, compute_minhash_signature
 from lsh.lsh_index import LSHIndex
-from lsh.similarity import jaccard_similarity, compute_true_pairs
+from lsh.minhash import compute_minhash_signature, generate_hash_params
+from lsh.preprocess import get_word_shingles, preprocess, process_comment
+from lsh.similarity import compute_true_pairs, jaccard_similarity
 
 
 class TestPreprocess:
@@ -112,7 +111,7 @@ class TestMinHash:
 class TestLSHIndex:
     def test_lsh_insert_adds_to_buckets(self):
         lsh = LSHIndex(r=5, b=10)
-        signature = [i for i in range(50)]
+        signature = list(range(50))
         lsh.insert(signature, 0)
         total_items = sum(len(bucket) for band in lsh.buckets for bucket in band.values())
         assert total_items == 10

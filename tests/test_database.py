@@ -1,4 +1,3 @@
-import pytest
 from database.database import init_db, insert_similarity
 
 
@@ -7,7 +6,7 @@ class TestInitDb:
         init_db()
         cursor = db_connection.cursor()
         cursor.execute("""
-            SELECT name FROM sqlite_master 
+            SELECT name FROM sqlite_master
             WHERE type='table' AND name='similarities'
         """)
         result = cursor.fetchone()
@@ -17,7 +16,7 @@ class TestInitDb:
         init_db()
         cursor = db_connection.cursor()
         cursor.execute("""
-            SELECT name FROM sqlite_master 
+            SELECT name FROM sqlite_master
             WHERE type='index' AND name='idx_doc_ids'
         """)
         result = cursor.fetchone()
@@ -39,7 +38,9 @@ class TestInsertSimilarity:
         cursor = db_connection.cursor()
         cursor.execute("SELECT doc_id_1, doc_id_2, similarity FROM similarities")
         row = cursor.fetchone()
-        assert row == (1, 2, 0.85)
+        assert row["doc_id_1"] == 1
+        assert row["doc_id_2"] == 2
+        assert row["similarity"] == 0.85
 
     def test_insert_similarity_order_independent(self, db_connection):
         init_db()
@@ -47,7 +48,8 @@ class TestInsertSimilarity:
         cursor = db_connection.cursor()
         cursor.execute("SELECT doc_id_1, doc_id_2 FROM similarities")
         row = cursor.fetchone()
-        assert row == (1, 2), "Doc IDs should be sorted (smaller first)"
+        assert row["doc_id_1"] == 1, "Doc IDs should be sorted (smaller first)"
+        assert row["doc_id_2"] == 2
 
     def test_insert_similarity_duplicate_ignored(self, db_connection):
         init_db()

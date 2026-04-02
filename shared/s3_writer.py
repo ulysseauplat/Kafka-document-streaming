@@ -1,17 +1,20 @@
 import json
-import time
-import threading
 import logging
+import threading
+import time
 from collections import defaultdict
-from typing import List, Dict, Any, Optional
+from typing import Any, Optional
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from shared.s3_config import (
-    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
-    AWS_REGION, S3_BUCKET, S3_FLUSH_INTERVAL
+    AWS_ACCESS_KEY_ID,
+    AWS_REGION,
+    AWS_SECRET_ACCESS_KEY,
+    S3_BUCKET,
+    S3_FLUSH_INTERVAL,
 )
 
 BUCKET_REGION = AWS_REGION
@@ -28,7 +31,7 @@ class S3Writer:
         self.s3_client: Optional[Any] = None
         self.bucket = S3_BUCKET
         self.flush_interval = S3_FLUSH_INTERVAL
-        self.buffer: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        self.buffer: dict[str, list[dict[str, Any]]] = defaultdict(list)
         self.lock = threading.Lock()
         self.running = True
 
@@ -40,9 +43,9 @@ class S3Writer:
                 region_name=AWS_REGION,
                 config=Config(connect_timeout=5, read_timeout=30, retries={'max_attempts': 3})
             )
-            
+
             self._ensure_bucket_exists()
-            
+
             self._timer_thread = threading.Thread(target=self._flush_loop, daemon=True)
             self._timer_thread.start()
             logging.info(f"S3Writer enabled | bucket={self.bucket} | flush_interval={self.flush_interval}s")
@@ -70,7 +73,7 @@ class S3Writer:
                 logging.error(f"Failed to create bucket: {e}")
                 self.enabled = False
 
-    def add(self, doc: Dict[str, Any], user_id: str):
+    def add(self, doc: dict[str, Any], user_id: str):
         if not self.enabled:
             return
         partition_key = self._get_partition_key(user_id)

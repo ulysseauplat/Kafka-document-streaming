@@ -1,12 +1,21 @@
-from kafka import KafkaProducer
-from shared.config import KAFKA_BROKER, TOPIC_NAME, BATCH_SIZE, BUFFER_MEMORY, LINGER_MS, SAMPLE_SIZE
-import json
-import time
 import csv
+import json
 import logging
 import os
+import time
+from typing import Any
 
+from kafka import KafkaProducer
 from kafka.errors import NoBrokersAvailable
+
+from shared.config import (
+    BATCH_SIZE,
+    BUFFER_MEMORY,
+    KAFKA_BROKER,
+    LINGER_MS,
+    SAMPLE_SIZE,
+    TOPIC_NAME,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,11 +23,11 @@ logging.basicConfig(
 )
 
 
-def json_serializer(data):
+def json_serializer(data: dict[str, Any]) -> bytes:
     return json.dumps(data).encode('utf-8')
 
 
-CSV_FILE = os.getenv("CSV_FILE", "data/nyt-comments-sorted.csv")
+CSV_FILE: str = os.getenv("CSV_FILE", "data/nyt-comments-sorted.csv")
 
 
 def main():

@@ -53,7 +53,7 @@ def init_db():
 def insert_similarity(doc1, doc2, sim):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
+
     doc1, doc2 = sorted((doc1, doc2))
 
     cursor.execute("""
@@ -70,7 +70,7 @@ def recalculate_user_stats():
     cursor = conn.cursor()
 
     cursor.execute("DELETE FROM user_stats")
-    
+
     cursor.execute("""
         INSERT INTO user_stats (user_id, total_comments, similar_pairs, similarity_rate)
         SELECT user_id, COUNT(*) as total_comments, 0, 0.0

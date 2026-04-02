@@ -1,6 +1,6 @@
 import re
 import string
-from typing import Optional, Set
+from typing import Optional
 
 import mmh3
 
@@ -27,7 +27,7 @@ def preprocess(comment: str, k: int) -> Optional[str]:
 
 # Split comment into words, create k-word shingles, hash them
 # Returns a set of hashed shingles for the input comment
-def get_word_shingles(comment: str, k: int) -> Set[int]:
+def get_word_shingles(comment: str, k: int) -> set[int]:
     """Generate k-word shingles and hash them."""
     words = comment.split()
     shingles = set()
@@ -39,7 +39,7 @@ def get_word_shingles(comment: str, k: int) -> Set[int]:
 # Full preprocessing pipeline:
 # 1. Clean the comment
 # 2. Generate and hash shingles
-def process_comment(comment: str, k: int) -> Optional[Set[int]]:
+def process_comment(comment: str, k: int) -> Optional[set[int]]:
     """Full preprocessing pipeline for a comment."""
     comment_clean = preprocess(comment, k)
     if comment_clean is None:

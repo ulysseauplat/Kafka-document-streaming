@@ -1,15 +1,16 @@
+import json
 import os
-from dotenv import load_dotenv
-load_dotenv()
-
-from flask import Flask, render_template, jsonify, request
 import sqlite3
+import time
+from datetime import datetime
+
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError, ReadTimeoutError, ConnectTimeoutError
-from datetime import datetime
-import json
-import time
+from botocore.exceptions import ClientError, ConnectTimeoutError, ReadTimeoutError
+from dotenv import load_dotenv
+from flask import Flask, jsonify, render_template, request
+
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -100,7 +101,7 @@ def get_spammers():
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT 
+            SELECT
                 d1.user_id as user_id,
                 u.total_comments,
                 COUNT(*) as similar_pairs,
