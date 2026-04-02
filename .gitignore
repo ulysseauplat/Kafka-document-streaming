@@ -27,6 +27,7 @@ certs/
 .vscode/
 .idea/
 
-# Data (optional)
+# Data
 *.csv
 *.json
+*.db

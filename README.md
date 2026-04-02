@@ -41,18 +41,19 @@ The system uses **Kafka streaming** to process comments in real-time, **LSH** fo
            │               │          │               │
            │• similarities │          │• Raw comment  │
            │• doc_users   │          │  documents    │
-           │• user_stats  │          │  (per user)   │
-           │• consumer_   │          └───────┬───────┘
+           │• user_stats  │          └───────┬───────┘
+           │• consumer_   │                  │
            │  stats       │                  │
            └───────┬───────┘                  │
                    │                         │
-                   ▼                         │
-           ┌───────────────────────────────────┤
-           │           Flask UI                 │
-           │          (Port 5000)              │
-           │                                    │
-           │  Metrics from SQLite    Comments display from S3
-           └───────────────────────────────────┘
+                   ▼                         ▼
+           ┌───────────────────────────────────────┐
+           │              Flask UI                  │
+           │             (Port 5000)               │
+           │                                        │
+           │  Metrics from SQLite                  │
+           │  Comments display from S3              │
+           └───────────────────────────────────────┘
 ```
 
 ### SQLite Database Tables
