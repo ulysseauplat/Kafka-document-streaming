@@ -1,18 +1,20 @@
 import json
 import time
 import threading
-import hashlib
 import logging
 from collections import defaultdict
 from typing import List, Dict, Any, Optional
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from shared.s3_config import (
     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
     AWS_REGION, S3_BUCKET, S3_FLUSH_INTERVAL
 )
+
+BUCKET_REGION = AWS_REGION
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,20 +37,38 @@ class S3Writer:
                 "s3",
                 aws_access_key_id=AWS_ACCESS_KEY_ID,
                 aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-                region_name=AWS_REGION
+                region_name=AWS_REGION,
+                config=Config(connect_timeout=5, read_timeout=30, retries={'max_attempts': 3})
             )
+            
+            self._ensure_bucket_exists()
+            
             self._timer_thread = threading.Thread(target=self._flush_loop, daemon=True)
             self._timer_thread.start()
             logging.info(f"S3Writer enabled | bucket={self.bucket} | flush_interval={self.flush_interval}s")
         else:
             logging.warning("S3Writer disabled (AWS credentials not configured). S3 uploads skipped.")
 
-    def _get_user_hash(self, user_id: str) -> str:
-        return hashlib.md5(user_id.encode()).hexdigest()[:8]
-
     def _get_partition_key(self, user_id: str) -> str:
-        user_hash = self._get_user_hash(user_id)
-        return f"user_hash={user_hash}"
+        return f"user_id={user_id}"
+
+    def _ensure_bucket_exists(self):
+        try:
+            self.s3_client.head_bucket(Bucket=self.bucket)
+            logging.info(f"Bucket exists: {self.bucket}")
+        except ClientError:
+            try:
+                if BUCKET_REGION == "us-east-1":
+                    self.s3_client.create_bucket(Bucket=self.bucket)
+                else:
+                    self.s3_client.create_bucket(
+                        Bucket=self.bucket,
+                        CreateBucketConfiguration={'LocationConstraint': BUCKET_REGION}
+                    )
+                logging.info(f"Created bucket: {self.bucket}")
+            except ClientError as e:
+                logging.error(f"Failed to create bucket: {e}")
+                self.enabled = False
 
     def add(self, doc: Dict[str, Any], user_id: str):
         if not self.enabled:
@@ -83,23 +103,23 @@ class S3Writer:
                 continue
 
             timestamp = int(time.time())
-            doc_ids = "_".join(str(r["id"]) for r in records[:5])
-            if len(records) > 5:
-                doc_ids += f"_and_{len(records) - 5}_more"
-            s3_key = f"{partition_key}/{timestamp}_{doc_ids}.jsonl"
+            for i, record in enumerate(records):
+                doc_id = record.get("id")
+                s3_key = f"{partition_key}/{timestamp}_{doc_id}_{i}.jsonl"
 
-            try:
-                content = "\n".join(json.dumps(r) for r in records)
-                client.put_object(
-                    Bucket=self.bucket,
-                    Key=s3_key,
-                    Body=content.encode("utf-8"),
-                    ContentType="application/jsonl"
-                )
-                total_records += len(records)
-                logging.info(f"Uploaded {len(records)} records to s3://{self.bucket}/{s3_key}")
-            except ClientError as e:
-                logging.error(f"S3 upload failed for {s3_key}: {e}")
+                try:
+                    content = json.dumps(record)
+                    client.put_object(
+                        Bucket=self.bucket,
+                        Key=s3_key,
+                        Body=content.encode("utf-8"),
+                        ContentType="application/json"
+                    )
+                    total_records += 1
+                except ClientError as e:
+                    logging.error(f"S3 upload failed for {s3_key}: {e}")
+
+            logging.info(f"Uploaded {len(records)} records to s3://{self.bucket}/{partition_key}/")
 
         logging.info(f"Flush complete | records={total_records} | partitions={len(buffers_to_flush)}")
 

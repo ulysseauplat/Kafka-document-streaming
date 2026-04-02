@@ -9,21 +9,60 @@ The system uses **Kafka streaming** to process comments in real-time, **LSH** fo
 ## Architecture
 
 ```
-                         ┌─────────────┐
-    CSV File              │   Kafka     │           ┌───────────┐
-     ───────►             │   Cluster   │           │  SQLite   │
-                         │ ┌─────────┐ │           │ Database  │
-┌──────────┐             │ │ kafka-0 │ │           │           │
-│ Producer │────────────►│ │ kafka-1 │ │────┐      │similarities│
-└──────────┘             │ └─────────┘ │    │      │   table   │
-                         └─────────────┘    │      └───────────┘
-                          │             │              ▲
-                          ▼             │              │
-                    ┌────────┬────────┬────────┐       │
-                    │Consumer│Consumer│Consumer│───────┘
-                    │   -1   │   -2   │   -3   │──────────► S3 Bucket
-                    └────────┴────────┴────────┘          (raw documents)
+                          ┌─────────────────────────────────────────────────────┐
+     CSV File              │              Kafka Cluster                        │
+      ───────►             │  ┌─────────────┐    ┌─────────────┐              │
+                          │  │  kafka-0    │    │  kafka-1    │              │
+ ┌──────────┐             │  └─────────────┘    └─────────────┘              │
+ │ Producer │────────────►│                                                  │
+ └──────────┘             └─────────────────────────────────────────────────┘
+                                              │             
+                                              ▼             
+                 ┌──────────────────────────────────────────────┐
+                 │              Kafka Topic (3 partitions)        │
+                 └──────────────────────────────────────────────┘
+                                              │             
+              ┌────────────────────────────────┼────────────────┐
+              ▼                                ▼                ▼
+       ┌────────────┐                  ┌────────────┐   ┌────────────┐
+       │ Consumer 1 │                  │ Consumer 2 │   │ Consumer 3 │
+       │ • LSH      │                  │ • LSH      │   │ • LSH      │
+       │ • MinHash  │                  │ • MinHash  │   │ • MinHash  │
+       │ • S3 Writer│                  │ • S3 Writer│   │ • S3 Writer│
+       └────────────┘                  └────────────┘   └────────────┘
+              │                                │                │
+              └────────────────┬──────────────────────────────┘
+                                 │
+                    ┌────────────┴────────────┐
+                    ▼                         ▼
+           ┌───────────────┐          ┌───────────────┐
+           │    SQLite     │          │      S3       │
+           │   Database    │          │   Data Lake   │
+           │               │          │               │
+           │• similarities │          │• Raw comment  │
+           │• doc_users   │          │  documents    │
+           │• user_stats  │          │  (per user)   │
+           │• consumer_   │          └───────┬───────┘
+           │  stats       │                  │
+           └───────┬───────┘                  │
+                   │                         │
+                   ▼                         │
+           ┌───────────────────────────────────┤
+           │           Flask UI                 │
+           │          (Port 5000)              │
+           │                                    │
+           │  Metrics from SQLite    Comments display from S3
+           └───────────────────────────────────┘
 ```
+
+### SQLite Database Tables
+
+| Table | Columns | Description |
+|-------|---------|-------------|
+| `similarities` | `id`, `doc_id_1`, `doc_id_2`, `similarity` | Pairs of similar documents |
+| `doc_users` | `doc_id`, `user_id` | Maps document to author |
+| `user_stats` | `user_id`, `total_comments`, `similar_pairs`, `similarity_rate` | Per-user aggregated stats |
+| `consumer_stats` | `consumer_id`, `timestamp`, `throughput`, `processed_count` | Consumer performance metrics |
 
 ## Key Features
 
@@ -61,7 +100,39 @@ The consumer limits memory usage by periodically cleaning up old data:
 
 ### Monitoring
 - **Logs**: Throughput metrics every 10 seconds
-- **Kafka-UI**: Dashboard at `http://localhost:8080`
+- **Kafka-UI**: Kafka cluster dashboard at `http://localhost:8080`
+- **Flask Dashboard**: Real-time metrics and spam detection at `http://localhost:5000`
+
+### Dashboard Metrics Explained
+
+The Flask UI displays real-time metrics sourced from SQLite database:
+
+| Metric | Description |
+|--------|-------------|
+| **Total Comments** | Total number of comments seen |
+| **Processed** | Comments actually processed (excludes comments smaller than shingle size) |
+| **Total Similarities** | Total number of similar comment pairs detected |
+| **Similarity Rate** | Computed per user: `similar_pairs / (n*(n-1)/2)` where n = user's total comments |
+| **Throughput** | Messages processed per second |
+
+**Similarity Rate Formula:**
+```
+For a user with n comments:
+  Possible pairs = n * (n-1) / 2
+  Similarity Rate = similar_pairs / possible_pairs
+```
+
+### Flask UI
+
+The Flask dashboard reads data from two sources:
+
+- **Metrics & Analytics**: Computed from SQLite database
+- **Comment Text**: Retrieved from S3 data lake
+
+Access the Flask UI at `http://localhost:5000`:
+- **Dashboard**: Real-time metrics (total comments, similarities found, throughput)
+- **Spam Detection**: View authors with high similarity rates and their comments
+- **Similar Comments**: View pairs of similar comments with text content
 
 ## Algorithm Overview
 
@@ -80,6 +151,10 @@ This approach avoids comparing every document pair (O(n²)) by only comparing do
 - Docker and Docker Compose installed
 - AWS account (optional, for S3 document storage)
 
+### Test Dataset
+
+For testing purposes, a small sample CSV file (`nyt-comments-part0.csv`) is included in the `data/` directory.
+
 ### AWS Credentials
 
 To enable S3 document storage, create a `.env` file in the project root:
@@ -95,7 +170,7 @@ AWS_REGION=eu-north-1
 S3_BUCKET=your-bucket-name
 ```
 
-The S3 writer is optional - if credentials are not set, documents will only be stored in the local SQLite database.
+The S3 writer is enabled by default - if AWS credentials are not set, S3 writes are skipped but the system continues to function with SQLite only.
 
 ### Run All Services
 ```bash
@@ -115,8 +190,11 @@ docker-compose ps
 # Watch consumer logs
 docker logs -f consumer-1
 
-# Check Kafka UI
+# Check Kafka UI (Kafka cluster)
 # Open http://localhost:8080
+
+# Check Flask Dashboard (metrics & spam detection)
+# Open http://localhost:5000
 ```
 
 ### View Results
@@ -158,6 +236,7 @@ docker-compose down
 | Kafka brokers | 768MB each |
 | Producer | 512MB |
 | Consumer | 512MB |
+| Flask UI | 256MB |
 
 ## Project Structure
 
@@ -169,10 +248,22 @@ Kafka-document-streaming/
 │
 ├── producer/                # CSV → Kafka
 │   ├── main.py             # Reads CSV, streams to Kafka
+│   ├── __init__.py
 │   └── Dockerfile
 │
 ├── consumer/                # Kafka → LSH → S3 + Similarity
 │   ├── consumer.py         # Main consumer with LSH + S3
+│   ├── __init__.py
+│   └── Dockerfile
+│
+├── flask-ui/                # Flask Dashboard
+│   ├── app.py              # Flask application with API
+│   ├── templates/          # HTML templates
+│   │   ├── dashboard.html      # Real-time metrics dashboard
+│   │   ├── spammers.html       # Spam detection page
+│   │   └── similar-comments.html # Similar comments viewer
+│   ├── static/             # Static assets
+│   │   └── style.css       # Professional styling
 │   └── Dockerfile
 │
 ├── lsh/                     # Locality Sensitive Hashing
@@ -183,10 +274,10 @@ Kafka-document-streaming/
 ├── shared/
 │   ├── config.py           # Kafka and algorithm configuration
 │   ├── s3_config.py        # AWS S3 configuration
-│   └── s3_writer.py       # S3 document uploader
+│   └── s3_writer.py        # S3 document uploader
 │
 ├── database/
-│   └── database.py         # SQLite storage for similarities
+│   └── database.py         # SQLite storage for similarities & user stats
 │
 ├── data/
 │   ├── nyt-comments-part0.csv  # NYT comments dataset

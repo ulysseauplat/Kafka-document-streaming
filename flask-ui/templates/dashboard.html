@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Similarity Detection - Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Document Similarity Detection</h1>
+            <nav>
+                <a href="/" class="active">Dashboard</a>
+                <a href="/spammers">Spam Detection</a>
+                <a href="/similar-comments">Similar Comments</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <h3>Total Comments</h3>
+                <p class="metric-value" id="total-comments">0</p>
+            </div>
+            <div class="metric-card">
+                <h3>Total Processed</h3>
+                <p class="metric-value" id="total-processed">0</p>
+            </div>
+            <div class="metric-card">
+                <h3>Total Speed</h3>
+                <p class="metric-value" id="total-speed">0</p>
+                <p class="metric-unit">msg/sec</p>
+            </div>
+            <div class="metric-card">
+                <h3>Similarities Found</h3>
+                <p class="metric-value" id="total-similarities">0</p>
+            </div>
+        </div>
+
+        <div class="metrics-grid">
+            <div class="metric-card throughput-card">
+                <h3>Consumer 1</h3>
+                <p class="metric-value" id="consumer-1">0</p>
+                <p class="metric-unit">msg/sec</p>
+            </div>
+            <div class="metric-card throughput-card">
+                <h3>Consumer 2</h3>
+                <p class="metric-value" id="consumer-2">0</p>
+                <p class="metric-unit">msg/sec</p>
+            </div>
+            <div class="metric-card throughput-card">
+                <h3>Consumer 3</h3>
+                <p class="metric-value" id="consumer-3">0</p>
+                <p class="metric-unit">msg/sec</p>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <h2>System Information</h2>
+            <p>This dashboard displays real-time metrics from the Kafka document streaming pipeline.</p>
+            <ul>
+                <li><strong>Producer:</strong> Streams CSV documents to Kafka</li>
+                <li><strong>Consumer:</strong> Processes messages with LSH algorithm</li>
+                <li><strong>S3:</strong> Raw document storage</li>
+                <li><strong>SQLite:</strong> Similarity results storage</li>
+            </ul>
+        </div>
+    </main>
+
+    <footer>
+        <p>Document Similarity Detection System &copy; 2024</p>
+    </footer>
+
+    <script>
+        async function fetchMetrics() {
+            try {
+                const response = await fetch("/api/metrics");
+                const data = await response.json();
+
+                document.getElementById("total-comments").textContent = 
+                    data.total_comments.toLocaleString();
+                document.getElementById("total-processed").textContent = 
+                    data.total_processed.toLocaleString();
+                document.getElementById("total-speed").textContent = 
+                    data.total_speed.toFixed(2);
+                document.getElementById("total-similarities").textContent = 
+                    data.total_similarities.toLocaleString();
+
+            } catch (error) {
+                console.error("Error fetching metrics:", error);
+            }
+        }
+
+        async function fetchConsumerStats() {
+            try {
+                const response = await fetch("/api/consumer-stats");
+                const data = await response.json();
+
+                for (let i = 1; i <= 3; i++) {
+                    const element = document.getElementById(`consumer-${i}`);
+                    if (data[i]) {
+                        element.textContent = data[i].throughput.toFixed(2);
+                    } else {
+                        element.textContent = "0";
+                    }
+                }
+            } catch (error) {
+                console.error("Error fetching consumer stats:", error);
+            }
+        }
+
+        fetchMetrics();
+        fetchConsumerStats();
+        setInterval(fetchMetrics, 3000);
+        setInterval(fetchConsumerStats, 3000);
+    </script>
+</body>
+</html>

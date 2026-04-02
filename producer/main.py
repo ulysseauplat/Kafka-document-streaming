@@ -4,6 +4,7 @@ import json
 import time
 import csv
 import logging
+import os
 
 from kafka.errors import NoBrokersAvailable
 
@@ -15,6 +16,9 @@ logging.basicConfig(
 
 def json_serializer(data):
     return json.dumps(data).encode('utf-8')
+
+
+CSV_FILE = os.getenv("CSV_FILE", "data/nyt-comments-sorted.csv")
 
 
 def main():
@@ -33,7 +37,7 @@ def main():
     else:
         logging.info("Producer started. Beginning CSV stream...")
 
-    with open("data/nyt-comments-part0.csv", newline="") as csvfile:
+    with open(CSV_FILE, newline="") as csvfile:
         reader = csv.DictReader(csvfile)
 
         for i, row in enumerate(reader):

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spam Detection - Document Similarity</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Document Similarity Detection</h1>
+            <nav>
+                <a href="/">Dashboard</a>
+                <a href="/spammers" class="active">Spam Detection</a>
+                <a href="/similar-comments">Similar Comments</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="page-header">
+            <h2>Suspicious Authors Detection</h2>
+            <p>Authors with similarity rate above 10%</p>
+        </div>
+
+        <div class="threshold-selector">
+            <label for="threshold">Similarity Threshold (%):</label>
+            <input type="number" id="threshold" min="0" max="100" value="10" step="1">
+            <button id="apply-threshold" class="apply-btn">Apply</button>
+        </div>
+
+        <div class="table-container">
+            <table id="spammers-table">
+                <thead>
+                    <tr>
+                        <th>User ID</th>
+                        <th>Total Comments</th>
+                        <th>Similar Pairs</th>
+                        <th>Similarity Rate</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="spammers-body">
+                    <tr>
+                        <td colspan="5" class="loading">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="comments-modal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2 id="modal-title">User Comments</h2>
+                <div id="modal-body">
+                    <h3>Similar Comments</h3>
+                    <div id="similar-comments"></div>
+                    <h3>Other Comments</h3>
+                    <div id="other-comments"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>Document Similarity Detection System &copy; 2024</p>
+    </footer>
+
+    <script>
+        async function fetchSpammers(threshold) {
+            try {
+                const response = await fetch(`/api/spammers?threshold=${threshold}`);
+                const data = await response.json();
+
+                const tbody = document.getElementById("spammers-body");
+                tbody.innerHTML = "";
+
+                if (data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="no-data">No suspicious authors found</td></tr>';
+                    return;
+                }
+
+                data.forEach(user => {
+                    const row = document.createElement("tr");
+                    row.innerHTML = `
+                        <td>${user.user_id}</td>
+                        <td>${user.total_comments.toLocaleString()}</td>
+                        <td>${user.similar_pairs.toLocaleString()}</td>
+                        <td><span class="rate-badge">${(user.similarity_rate * 100).toFixed(2)}%</span></td>
+                        <td><button class="view-btn" onclick="viewComments('${user.user_id}')">View Comments</button></td>
+                    `;
+                    tbody.appendChild(row);
+                });
+
+            } catch (error) {
+                console.error("Error fetching spammers:", error);
+                document.getElementById("spammers-body").innerHTML = 
+                    '<tr><td colspan="5" class="error">Error loading data</td></tr>';
+            }
+        }
+
+        async function viewComments(userId) {
+            const modal = document.getElementById("comments-modal");
+            const title = document.getElementById("modal-title");
+            const similarDiv = document.getElementById("similar-comments");
+            const otherDiv = document.getElementById("other-comments");
+
+            title.textContent = `Comments for User: ${userId}`;
+            similarDiv.innerHTML = "<p>Loading similar comments...</p>";
+            otherDiv.innerHTML = "<p>Loading other comments...</p>";
+
+            modal.style.display = "block";
+
+            try {
+                const response = await fetch(`/api/comments/${userId}`);
+                const data = await response.json();
+
+                similarDiv.innerHTML = "";
+                if (data.similar_comments && data.similar_comments.length > 0) {
+                    data.similar_comments.forEach(comment => {
+                        const div = document.createElement("div");
+                        div.className = "comment-card similar";
+                        div.innerHTML = `
+                            <p class="comment-id">ID: ${comment.id}</p>
+                            <p class="comment-text">${comment.text}</p>
+                        `;
+                        similarDiv.appendChild(div);
+                    });
+                } else {
+                    similarDiv.innerHTML = "<p class='no-data'>No similar comments found</p>";
+                }
+
+                otherDiv.innerHTML = "";
+                if (data.non_similar_comments && data.non_similar_comments.length > 0) {
+                    data.non_similar_comments.forEach(comment => {
+                        const div = document.createElement("div");
+                        div.className = "comment-card";
+                        div.innerHTML = `
+                            <p class="comment-id">ID: ${comment.id}</p>
+                            <p class="comment-text">${comment.text}</p>
+                        `;
+                        otherDiv.appendChild(div);
+                    });
+                } else {
+                    otherDiv.innerHTML = "<p class='no-data'>No other comments found</p>";
+                }
+
+            } catch (error) {
+                similarDiv.innerHTML = "<p class='error'>Error loading comments from S3</p>";
+                otherDiv.innerHTML = "";
+            }
+        }
+
+        function escapeHtml(text) {
+            if (!text) return "";
+            return text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        document.querySelector(".close").onclick = function() {
+            document.getElementById("comments-modal").style.display = "none";
+        };
+
+        window.onclick = function(event) {
+            if (event.target == document.getElementById("comments-modal")) {
+                document.getElementById("comments-modal").style.display = "none";
+            }
+        };
+
+        document.getElementById("apply-threshold").addEventListener("click", function() {
+            fetchSpammers(document.getElementById("threshold").value);
+        });
+
+        document.getElementById("threshold").addEventListener("keypress", function(e) {
+            if (e.key === "Enter") {
+                fetchSpammers(this.value);
+            }
+        });
+
+        fetchSpammers(10);
+    </script>
+</body>
+</html>

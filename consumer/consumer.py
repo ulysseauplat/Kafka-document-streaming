@@ -3,6 +3,7 @@ import json
 import time
 import logging
 import gc
+import os
 
 from lsh.preprocess import process_comment
 from lsh.minhash import generate_hash_params, compute_minhash_signature
@@ -13,13 +14,19 @@ from shared.config import (
     FETCH_MAX_WAIT_MS, SHINGLE_DICT_MAX_SIZE, SEEN_PAIRS_MAX_SIZE
 )
 from shared.s3_writer import S3Writer
-from database.database import init_db, insert_similarity
+from database.database import (
+    init_db, insert_similarity, 
+    track_doc_user, update_user_stats_comment,
+    update_consumer_stats, recalculate_user_stats
+)
 
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | CONSUMER | %(levelname)s | %(message)s"
 )
+
+CONSUMER_ID = int(os.getenv("CONSUMER_ID", "1"))
 
 
 def json_deserializer(data):
@@ -56,6 +63,7 @@ def main():
     logging.info("Consumer starting...")
 
     init_db()
+    recalculate_user_stats()
 
     s3_writer = S3Writer()
 
@@ -93,6 +101,8 @@ def main():
     last_processed = 0
     gc_interval = 500
 
+    current_user = None
+
     for message in consumer:
 
         if message is None:
@@ -108,7 +118,16 @@ def main():
         text = doc.get("text")
         user_id = doc.get("user_id")
 
+        if current_user is not None and user_id != current_user:
+            shingle_dict.clear()
+            lsh = LSHIndex(r, n_hash // r)
+            seen_pairs.clear()
+
+        current_user = user_id
+
+        update_user_stats_comment(user_id)
         s3_writer.add(doc, user_id)
+        track_doc_user(doc_id, user_id)
 
         logging.info(f"Received doc id={doc_id}")
 
@@ -173,6 +192,8 @@ def main():
                 f"similarities={similarity_count} | "
                 f"similarity_rate={similarity_rate:.2f}%"
             )
+
+            update_consumer_stats(CONSUMER_ID, throughput, processed_count)
 
             last_log_time = now
             last_processed = processed_count

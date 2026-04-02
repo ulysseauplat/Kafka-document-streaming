@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Similar Comments - Document Similarity</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Document Similarity Detection</h1>
+            <nav>
+                <a href="/">Dashboard</a>
+                <a href="/spammers">Spam Detection</a>
+                <a href="/similar-comments" class="active">Similar Comments</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="page-header">
+            <h2>Similar Comments Pairs</h2>
+            <p>Pairs of comments flagged as similar</p>
+        </div>
+
+        <div class="filter-bar">
+            <label for="limit">Show:</label>
+            <select id="limit">
+                <option value="20">20 pairs</option>
+                <option value="50" selected>50 pairs</option>
+                <option value="100">100 pairs</option>
+            </select>
+            <button onclick="fetchSimilarComments()">Refresh</button>
+        </div>
+
+        <div class="similar-pairs-container" id="similar-pairs">
+            <p class="loading">Loading...</p>
+        </div>
+    </main>
+
+    <footer>
+        <p>Document Similarity Detection System &copy; 2024</p>
+    </footer>
+
+    <script>
+        async function fetchSimilarComments() {
+            const limit = document.getElementById("limit").value;
+            const container = document.getElementById("similar-pairs");
+            
+            container.innerHTML = "<p class='loading'>Loading...</p>";
+
+            try {
+                const response = await fetch(`/api/similar-comments?limit=${limit}`);
+                const data = await response.json();
+
+                if (data.length === 0) {
+                    container.innerHTML = "<p class='no-data'>No similar comments found</p>";
+                    return;
+                }
+
+                container.innerHTML = "";
+
+                data.forEach(pair => {
+                    const card = document.createElement("div");
+                    card.className = "similar-pair-card";
+                    
+                    const similarityPercent = (pair.similarity * 100).toFixed(1);
+                    const sameUser = pair.user_id_1 === pair.user_id_2;
+                    
+                    card.innerHTML = `
+                        <div class="pair-header">
+                            <span class="similarity-badge">${similarityPercent}% similar</span>
+                            ${sameUser ? '<span class="same-user-badge">Same User</span>' : ''}
+                        </div>
+                        <div class="pair-content">
+                            <div class="comment-box">
+                                <p class="comment-meta">Doc #${pair.doc_id_1} | User: ${pair.user_id_1}</p>
+                                <p class="comment-text">${escapeHtml(pair.text_1)}</p>
+                            </div>
+                            <div class="comment-box">
+                                <p class="comment-meta">Doc #${pair.doc_id_2} | User: ${pair.user_id_2}</p>
+                                <p class="comment-text">${escapeHtml(pair.text_2)}</p>
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(card);
+                });
+
+            } catch (error) {
+                console.error("Error fetching similar comments:", error);
+                container.innerHTML = "<p class='error'>Error loading similar comments</p>";
+            }
+        }
+
+        function escapeHtml(text) {
+            if (!text) return "";
+            return text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        document.getElementById("limit").addEventListener("change", fetchSimilarComments);
+        fetchSimilarComments();
+    </script>
+</body>
+</html>
