@@ -44,16 +44,37 @@
                 <h3>Consumer 1</h3>
                 <p class="metric-value" id="consumer-1">0</p>
                 <p class="metric-unit">msg/sec</p>
+                <p class="metric-latency" id="consumer-1-latency">Latency: 0ms</p>
             </div>
             <div class="metric-card throughput-card">
                 <h3>Consumer 2</h3>
                 <p class="metric-value" id="consumer-2">0</p>
                 <p class="metric-unit">msg/sec</p>
+                <p class="metric-latency" id="consumer-2-latency">Latency: 0ms</p>
             </div>
             <div class="metric-card throughput-card">
                 <h3>Consumer 3</h3>
                 <p class="metric-value" id="consumer-3">0</p>
                 <p class="metric-unit">msg/sec</p>
+                <p class="metric-latency" id="consumer-3-latency">Latency: 0ms</p>
+            </div>
+        </div>
+
+        <div class="metrics-grid">
+            <div class="metric-card latency-card">
+                <h3>System Avg Latency</h3>
+                <p class="metric-value" id="system-avg-latency">0</p>
+                <p class="metric-unit">ms</p>
+            </div>
+            <div class="metric-card latency-card">
+                <h3>Min Latency</h3>
+                <p class="metric-value" id="system-min-latency">0</p>
+                <p class="metric-unit">ms</p>
+            </div>
+            <div class="metric-card latency-card">
+                <h3>Max Latency</h3>
+                <p class="metric-value" id="system-max-latency">0</p>
+                <p class="metric-unit">ms</p>
             </div>
         </div>
 
@@ -100,10 +121,13 @@
 
                 for (let i = 1; i <= 3; i++) {
                     const element = document.getElementById(`consumer-${i}`);
+                    const latencyElement = document.getElementById(`consumer-${i}-latency`);
                     if (data[i]) {
                         element.textContent = data[i].throughput.toFixed(2);
+                        latencyElement.textContent = `Latency: ${data[i].avg_latency_ms.toFixed(2)}ms`;
                     } else {
                         element.textContent = "0";
+                        latencyElement.textContent = "Latency: 0ms";
                     }
                 }
             } catch (error) {
@@ -111,10 +135,28 @@
             }
         }
 
+        async function fetchSystemLatency() {
+            try {
+                const response = await fetch("/api/system-latency");
+                const data = await response.json();
+
+                document.getElementById("system-avg-latency").textContent = 
+                    data.avg_latency_ms.toFixed(2);
+                document.getElementById("system-min-latency").textContent = 
+                    data.min_latency_ms.toFixed(2);
+                document.getElementById("system-max-latency").textContent = 
+                    data.max_latency_ms.toFixed(2);
+            } catch (error) {
+                console.error("Error fetching system latency:", error);
+            }
+        }
+
         fetchMetrics();
         fetchConsumerStats();
+        fetchSystemLatency();
         setInterval(fetchMetrics, 3000);
         setInterval(fetchConsumerStats, 3000);
+        setInterval(fetchSystemLatency, 3000);
     </script>
 </body>
 </html>

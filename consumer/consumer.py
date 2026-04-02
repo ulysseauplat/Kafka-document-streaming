@@ -14,6 +14,7 @@ from database.database import (
     track_doc_user,
     update_consumer_stats,
     update_user_stats_comment,
+    update_system_latency,
 )
 from lsh.lsh_index import LSHIndex
 from lsh.minhash import compute_minhash_signature, generate_hash_params
@@ -35,8 +36,7 @@ from shared.config import (
 from shared.s3_writer import S3Writer
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | CONSUMER | %(levelname)s | %(message)s"
+    level=logging.INFO, format="%(asctime)s | CONSUMER | %(levelname)s | %(message)s"
 )
 
 CONSUMER_ID: int = int(os.getenv("CONSUMER_ID", "1"))
@@ -60,15 +60,13 @@ def wait_for_kafka():
     for i in range(30):
         try:
             consumer = KafkaConsumer(
-                TOPIC_NAME,
-                bootstrap_servers=KAFKA_BROKER,
-                consumer_timeout_ms=2000
+                TOPIC_NAME, bootstrap_servers=KAFKA_BROKER, consumer_timeout_ms=2000
             )
             consumer.close()
             logging.info("Kafka is ready!")
             return
         except Exception as e:
-            logging.warning(f"Kafka not ready yet ({i+1}/30): {e}")
+            logging.warning(f"Kafka not ready yet ({i + 1}/30): {e}")
             time.sleep(2)
 
     raise Exception("Kafka never became available")
@@ -111,6 +109,11 @@ def main():
     similarity_count: int = 0
     cleanup_counter: int = 0
 
+    latency_total_ms: float = 0
+    latency_count: int = 0
+    latency_min_ms: float = float("inf")
+    latency_max_ms: float = 0
+
     start_time: float = time.time()
     last_log_time: float = time.time()
     last_processed: int = 0
@@ -119,7 +122,6 @@ def main():
     current_user: Optional[str] = None
 
     for message in consumer:
-
         if message is None:
             continue
 
@@ -132,6 +134,16 @@ def main():
         doc_id = doc.get("id")
         text = doc.get("text")
         user_id = doc.get("user_id")
+        produced_at = doc.get("produced_at")
+
+        if produced_at:
+            latency_ms = (msg_start - produced_at) * 1000
+            latency_total_ms += latency_ms
+            latency_count += 1
+            if latency_ms < latency_min_ms:
+                latency_min_ms = latency_ms
+            if latency_ms > latency_max_ms:
+                latency_max_ms = latency_ms
 
         if current_user is not None and user_id != current_user:
             shingle_dict.clear()
@@ -173,9 +185,7 @@ def main():
                         insert_similarity(i, j, sim)
                         similarity_count += 1
 
-                        logging.info(
-                            f"SIMILARITY FOUND: {i}-{j} = {sim:.2f}"
-                        )
+                        logging.info(f"SIMILARITY FOUND: {i}-{j} = {sim:.2f}")
 
                     except Exception as e:
                         logging.error(f"DB insert failed {i}-{j}: {e}")
@@ -191,24 +201,41 @@ def main():
             interval_processed = processed_count - last_processed
             interval_time = now - last_log_time
 
-            throughput = (
-                interval_processed / interval_time
-                if interval_time > 0 else 0
-            )
+            throughput = interval_processed / interval_time if interval_time > 0 else 0
 
             similarity_rate = (
-                (similarity_count / processed_count) * 100
-                if processed_count > 0 else 0
+                (similarity_count / processed_count) * 100 if processed_count > 0 else 0
             )
+
+            avg_latency = latency_total_ms / latency_count if latency_count > 0 else 0
+            min_latency = latency_min_ms if latency_min_ms != float("inf") else 0
 
             logging.info(
                 f"METRICS | throughput={throughput:.2f} msg/s | "
                 f"processed={processed_count} | "
                 f"similarities={similarity_count} | "
-                f"similarity_rate={similarity_rate:.2f}%"
+                f"similarity_rate={similarity_rate:.2f}% | "
+                f"latency avg={avg_latency:.2f}ms min={min_latency:.2f}ms max={latency_max_ms:.2f}ms"
             )
 
-            update_consumer_stats(CONSUMER_ID, throughput, processed_count)
+            update_consumer_stats(
+                CONSUMER_ID,
+                throughput,
+                processed_count,
+                avg_latency,
+                min_latency,
+                latency_max_ms,
+                latency_total_ms,
+                latency_count,
+            )
+
+            if latency_count > 0:
+                update_system_latency(latency_total_ms, latency_count, min_latency, latency_max_ms)
+
+            latency_total_ms = 0
+            latency_count = 0
+            latency_min_ms = float("inf")
+            latency_max_ms = 0
 
             last_log_time = now
             last_processed = processed_count
@@ -218,17 +245,19 @@ def main():
             cleanup_counter = 0
 
             if len(shingle_dict) > SHINGLE_DICT_MAX_SIZE:
-                keys_to_remove = sorted(shingle_dict.keys())[:len(shingle_dict) // 4]
+                keys_to_remove = sorted(shingle_dict.keys())[: len(shingle_dict) // 4]
                 for key in keys_to_remove:
                     del shingle_dict[key]
 
             if len(seen_pairs) > SEEN_PAIRS_MAX_SIZE:
-                pairs_to_remove = list(seen_pairs)[:len(seen_pairs) // 4]
+                pairs_to_remove = list(seen_pairs)[: len(seen_pairs) // 4]
                 for p in pairs_to_remove:
                     seen_pairs.discard(p)
 
             gc.collect()
-            logging.info(f"MEMORY CLEANUP | shingle_dict size={len(shingle_dict)} | seen_pairs size={len(seen_pairs)}")
+            logging.info(
+                f"MEMORY CLEANUP | shingle_dict size={len(shingle_dict)} | seen_pairs size={len(seen_pairs)}"
+            )
 
         consumer.commit()
 
@@ -241,7 +270,7 @@ def main():
         f"processed={processed_count} | "
         f"similarities={similarity_count} | "
         f"runtime={total_time:.2f}s | "
-        f"avg_throughput={processed_count/total_time:.2f} msg/s"
+        f"avg_throughput={processed_count / total_time:.2f} msg/s"
     )
 
 

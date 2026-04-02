@@ -92,6 +92,24 @@ main {
     color: #0f172a;
 }
 
+.metric-latency {
+    font-size: 0.75rem;
+    color: #64748b;
+    margin-top: 0.25rem;
+}
+
+.latency-card .metric-value {
+    color: #059669;
+}
+
+.throughput-card {
+    border-left: 3px solid #3b82f6;
+}
+
+.latency-card {
+    border-left: 3px solid #059669;
+}
+
 .chart-container {
     background: white;
     border-radius: 12px;

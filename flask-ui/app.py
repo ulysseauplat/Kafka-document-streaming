@@ -27,7 +27,7 @@ if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
         aws_access_key_id=AWS_ACCESS_KEY_ID,
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
         region_name=AWS_REGION,
-        config=Config(connect_timeout=5, read_timeout=30, retries={'max_attempts': 2})
+        config=Config(connect_timeout=5, read_timeout=30, retries={"max_attempts": 2}),
     )
 
 
@@ -81,13 +81,15 @@ def get_metrics():
 
         conn.close()
 
-        return jsonify({
-            "total_comments": total_comments,
-            "total_similarities": total_similarities,
-            "total_processed": total_processed,
-            "total_speed": round(total_speed, 2),
-            "timestamp": datetime.now().isoformat()
-        })
+        return jsonify(
+            {
+                "total_comments": total_comments,
+                "total_similarities": total_similarities,
+                "total_processed": total_processed,
+                "total_speed": round(total_speed, 2),
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -100,7 +102,8 @@ def get_spammers():
         conn = get_db()
         cur = conn.cursor()
 
-        cur.execute("""
+        cur.execute(
+            """
             SELECT
                 d1.user_id as user_id,
                 u.total_comments,
@@ -115,7 +118,9 @@ def get_spammers():
             HAVING CAST(COUNT(*) AS REAL) / NULLIF(u.total_comments * (u.total_comments - 1) / 2, 0) >= ?
             ORDER BY similarity_rate DESC
             LIMIT 100
-        """, (threshold,))
+        """,
+            (threshold,),
+        )
 
         spammers = [dict(row) for row in cur.fetchall()]
         conn.close()
@@ -131,7 +136,9 @@ def get_consumer_stats():
         conn = get_db()
         cur = conn.cursor()
 
-        cur.execute("SELECT consumer_id, throughput, processed_count, timestamp FROM consumer_stats")
+        cur.execute(
+            "SELECT consumer_id, throughput, processed_count, timestamp, avg_latency_ms, min_latency_ms, max_latency_ms FROM consumer_stats"
+        )
         rows = cur.fetchall()
         conn.close()
 
@@ -140,10 +147,49 @@ def get_consumer_stats():
             stats[row["consumer_id"]] = {
                 "throughput": row["throughput"],
                 "processed_count": row["processed_count"],
-                "timestamp": row["timestamp"]
+                "timestamp": row["timestamp"],
+                "avg_latency_ms": row["avg_latency_ms"],
+                "min_latency_ms": row["min_latency_ms"],
+                "max_latency_ms": row["max_latency_ms"],
             }
 
         return jsonify(stats)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/system-latency")
+def get_system_latency():
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute(
+            "SELECT total_latency_ms, latency_count, min_latency_ms, max_latency_ms FROM system_stats WHERE id = 1"
+        )
+        row = cur.fetchone()
+        conn.close()
+
+        if row and row["latency_count"] > 0:
+            avg_latency = row["total_latency_ms"] / row["latency_count"]
+            return jsonify(
+                {
+                    "avg_latency_ms": round(avg_latency, 2),
+                    "min_latency_ms": row["min_latency_ms"],
+                    "max_latency_ms": row["max_latency_ms"],
+                    "total_latency_ms": row["total_latency_ms"],
+                    "latency_count": row["latency_count"],
+                }
+            )
+        return jsonify(
+            {
+                "avg_latency_ms": 0,
+                "min_latency_ms": 0,
+                "max_latency_ms": 0,
+                "total_latency_ms": 0,
+                "latency_count": 0,
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -159,7 +205,8 @@ def get_similar_comments():
         conn = get_db()
         cur = conn.cursor()
 
-        cur.execute("""
+        cur.execute(
+            """
             SELECT s.doc_id_1, s.doc_id_2, s.similarity,
                    d1.user_id as user_id_1,
                    d2.user_id as user_id_2
@@ -167,7 +214,9 @@ def get_similar_comments():
             JOIN doc_users d1 ON s.doc_id_1 = d1.doc_id
             JOIN doc_users d2 ON s.doc_id_2 = d2.doc_id
             LIMIT ?
-        """, (limit,))
+        """,
+            (limit,),
+        )
 
         pairs = [dict(row) for row in cur.fetchall()]
         conn.close()
@@ -181,7 +230,9 @@ def get_similar_comments():
         for user_id in user_ids:
             prefix = f"user_id={user_id}/"
             try:
-                for page in s3_client.get_paginator("list_objects_v2").paginate(Bucket=S3_BUCKET, Prefix=prefix):
+                for page in s3_client.get_paginator("list_objects_v2").paginate(
+                    Bucket=S3_BUCKET, Prefix=prefix
+                ):
                     if "Contents" not in page:
                         continue
                     for obj in page["Contents"]:
@@ -196,7 +247,7 @@ def get_similar_comments():
                             if doc_id:
                                 doc_lookup[doc_id] = {
                                     "text": doc.get("text"),
-                                    "user_id": doc.get("user_id")
+                                    "user_id": doc.get("user_id"),
                                 }
                         except (ClientError, json.JSONDecodeError):
                             continue
@@ -207,15 +258,17 @@ def get_similar_comments():
         for p in pairs:
             doc1 = doc_lookup.get(p["doc_id_1"], {})
             doc2 = doc_lookup.get(p["doc_id_2"], {})
-            results.append({
-                "doc_id_1": p["doc_id_1"],
-                "doc_id_2": p["doc_id_2"],
-                "similarity": p["similarity"],
-                "text_1": doc1.get("text"),
-                "text_2": doc2.get("text"),
-                "user_id_1": p["user_id_1"],
-                "user_id_2": p["user_id_2"]
-            })
+            results.append(
+                {
+                    "doc_id_1": p["doc_id_1"],
+                    "doc_id_2": p["doc_id_2"],
+                    "similarity": p["similarity"],
+                    "text_1": doc1.get("text"),
+                    "text_2": doc2.get("text"),
+                    "user_id_1": p["user_id_1"],
+                    "user_id_2": p["user_id_2"],
+                }
+            )
 
         return jsonify(results)
     except Exception as e:
@@ -281,7 +334,7 @@ def get_comments(user_id):
                                     comment = {
                                         "id": doc.get("id"),
                                         "text": doc.get("text"),
-                                        "timestamp": key.split("/")[-1].split("_")[0]
+                                        "timestamp": key.split("/")[-1].split("_")[0],
                                     }
                                     similar_comments.append(comment)
                             except json.JSONDecodeError:
@@ -296,13 +349,15 @@ def get_comments(user_id):
         similar_comments = similar_comments[:10]
         non_similar_comments = similar_comments[10:15] if len(similar_comments) > 10 else []
 
-        return jsonify({
-            "user_id": user_id,
-            "similar_comments": similar_comments,
-            "non_similar_comments": non_similar_comments,
-            "total_found": len(similar_comments),
-            "files_checked": files_checked
-        })
+        return jsonify(
+            {
+                "user_id": user_id,
+                "similar_comments": similar_comments,
+                "non_similar_comments": non_similar_comments,
+                "total_found": len(similar_comments),
+                "files_checked": files_checked,
+            }
+        )
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500

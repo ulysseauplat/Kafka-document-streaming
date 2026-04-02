@@ -1,0 +1,452 @@
+================================================================================
+       DOCUMENT SIMILARITY DETECTION WITH KAFKA + LSH
+       Project Description and Technical Resume
+================================================================================
+
+PROJECT OVERVIEW
+--------------------------------------------------------------------------------
+This project implements a real-time document similarity detection system using
+Apache Kafka for streaming and Locality Sensitive Hashing (LSH) for efficient
+similarity computation. The system is designed to detect spam patterns such as:
+- Repetitive spam: Same user posting identical or near-identical comments
+- Multi-article spam: Same user posting the same comment across different articles
+
+ARCHITECTURE SUMMARY
+--------------------------------------------------------------------------------
+The system consists of 5 main components orchestrated via Docker Compose:
+
+1. PRODUCER: Reads CSV data and streams it to Kafka topics
+2. KAFKA CLUSTER: 2 Kafka brokers with 3 partitions for parallel processing
+3. CONSUMERS (3 instances): Process messages, detect similarities using LSH
+4. S3 DATA LAKE: Stores raw document data (optional, requires AWS credentials)
+5. FLASK DASHBOARD: Real-time monitoring and spam detection UI
+
+                              ┌──────────────────────────────────────┐
+  CSV File ──────────────────►│     Kafka Cluster (2 brokers)        │
+                              │     Topic: documents (3 partitions)   │
+                              └──────────────────────────────────────┘
+                                              │
+                     ┌────────────────────────┼────────────────────────┐
+                     ▼                        ▼                        ▼
+              ┌────────────┐          ┌────────────┐          ┌────────────┐
+              │ Consumer 1 │          │ Consumer 2 │          │ Consumer 3 │
+              │  LSH+LSH   │          │  LSH+LSH   │          │  LSH+LSH   │
+              └─────┬──────┘          └─────┬──────┘          └─────┬──────┘
+                    └────────────────────────┼────────────────────────┘
+                                             │
+                    ┌─────────────────────────┼─────────────────────────┐
+                    ▼                         ▼                         ▼
+              ┌───────────┐           ┌───────────┐           ┌───────────┐
+              │  SQLite   │           │    S3     │           │   Flask   │
+              │ Database  │           │ Data Lake │           │ Dashboard │
+              └───────────┘           └───────────┘           └───────────┘
+
+================================================================================
+                              CORE ALGORITHMS IMPLEMENTED
+================================================================================
+
+1. TEXT PREPROCESSING (lsh/preprocess.py)
+--------------------------------------------------------------------------------
+The preprocessing pipeline normalizes text before similarity analysis:
+- Lowercase conversion for case-insensitive matching
+- @mention removal to avoid user references affecting similarity
+- URL removal to exclude external links from comparison
+- Punctuation removal for cleaner tokenization
+- Whitespace normalization and collapsing
+- Short text filtering (comments with fewer than k words are rejected)
+- K-word shingling with MurmurHash3 hashing
+
+Key functions:
+- preprocess(comment, k): Cleans and normalizes text
+- get_word_shingles(comment, k): Generates k-word tokens and hashes them
+- process_comment(comment, k): Full preprocessing pipeline
+
+2. MINHASH SIGNATURE (lsh/minhash.py)
+--------------------------------------------------------------------------------
+MinHash provides a compact representation of document shingles for efficient
+comparison. The implementation uses:
+
+- Hash function family: f(x) = a*x + b mod(prime)
+- 60 hash functions generate a signature of length 60
+- Large prime (2147483647) for modular arithmetic
+- Signature: Minimum hash value across all shingles for each function
+- Same input always produces identical signature (deterministic)
+
+Key functions:
+- generate_hash_params(n_hash, prime): Generates consistent (a,b) pairs
+- compute_minhash_signature(shingles, hash_params, prime): Creates signature
+
+3. LOCALITY SENSITIVE HASHING (lsh/lsh_index.py)
+--------------------------------------------------------------------------------
+LSH uses the banding technique to efficiently find candidate similar pairs:
+- Signature split into bands (3 bands of 20 hashes each)
+- Each band is hashed into buckets using MurmurHash3
+- Documents in the same bucket in ANY band become candidate pairs
+- This reduces comparison from O(n²) to approximately O(n)
+
+Key features:
+- Uses mmh3 (MurmurHash3) for fast bucket hashing
+- Tracks candidate pairs in a set to avoid duplicates
+- Banding technique: s^(1/r) probability of collision where s=similarity
+
+4. JACCARD SIMILARITY VERIFICATION
+--------------------------------------------------------------------------------
+True similarity is verified using Jaccard similarity:
+- Jaccard(A,B) = |A ∩ B| / |A ∪ B|
+- Threshold: 0.15 (configurable)
+- Only pairs above threshold are stored as similarities
+
+================================================================================
+                              KAFKA INTEGRATION
+================================================================================
+
+PRODUCER FEATURES (producer/main.py)
+--------------------------------------------------------------------------------
+- Reads comments from CSV files (NYT Comments Dataset)
+- KafkaProducer with optimized settings:
+  * Batch size: 16384 bytes for efficient batching
+  * Buffer memory: 32MB
+  * Linger.ms: 100ms for batch accumulation
+  * Acks: 1 for balanced durability/performance
+  * Retries: 3 for fault tolerance
+- Messages keyed by userID (ensures same-user comments go to same partition)
+- Waits up to 40 seconds for Kafka to become available
+- Configurable sample size for testing (default: process all)
+
+CONSUMER FEATURES (consumer/consumer.py)
+--------------------------------------------------------------------------------
+- Manual offset commit for at-least-once processing guarantee
+- Consumer group: "document-consumer-group"
+- Batch fetching optimization:
+  * max_poll_records: 100
+  * fetch_min_bytes: 1024
+  * fetch_max_wait_ms: 500ms
+- Per-user isolation: Clears LSH state when user changes
+- Memory management:
+  * SHINGLE_DICT_MAX_SIZE: 10000 (keeps recent user shinglings)
+  * SEEN_PAIRS_MAX_SIZE: 50000 (prevents memory exhaustion)
+  * Garbage collection every 500 messages
+- Slow message detection (>1 second warning)
+- Real-time metrics every 10 seconds:
+  * Throughput (msg/sec)
+  * Processed count
+  * Similarities found
+  * Similarity rate percentage
+
+KAFKA CLUSTER CONFIGURATION
+--------------------------------------------------------------------------------
+- 2 Kafka brokers for high availability
+- Zookeeper for cluster coordination
+- Replication factor: 2
+- MIN_ISR: 1 (tolerates 1 broker failure)
+- 3 partitions for parallel consumer processing
+- Health checks for broker availability
+- Topic auto-creation disabled (explicit creation via create-topic service)
+
+================================================================================
+                              DATA STORAGE
+================================================================================
+
+SQLite Database (database/database.py)
+--------------------------------------------------------------------------------
+Four main tables with proper indexing:
+
+1. similarities
+   - doc_id_1, doc_id_2: Document pair identifiers
+   - similarity: Jaccard similarity score
+   - UNIQUE constraint prevents duplicate pairs
+   - Index on (doc_id_1, doc_id_2)
+
+2. doc_users
+   - Maps documents to their authors
+   - doc_id PRIMARY KEY, user_id indexed
+   - Used for user-based spam analysis
+
+3. user_stats
+   - user_id PRIMARY KEY
+   - total_comments: Count of user's comments
+   - similar_pairs: Count of similar pairs found
+   - similarity_rate: Ratio for spam scoring
+   - ON CONFLICT handling for upserts
+
+4. consumer_stats
+   - Tracks each consumer's performance
+   - throughput: Current processing speed
+   - processed_count: Total messages processed
+   - timestamp: Last update time
+
+Database Functions:
+- insert_similarity(): Stores verified similar pairs
+- track_doc_user(): Maps documents to users
+- update_user_stats_comment(): Increments user comment count
+- recalculate_user_stats(): Rebuilds user statistics
+- update_consumer_stats(): Records performance metrics
+
+S3 Data Lake (shared/s3_writer.py)
+--------------------------------------------------------------------------------
+Optional AWS S3 integration for raw document storage:
+
+- Partitioned by user_id for efficient querying
+- Threaded background flush every 15 seconds
+- JSON format with document metadata
+- S3 key format: user_id={user_id}/{timestamp}_{doc_id}_{index}.jsonl
+- Graceful degradation if AWS credentials not configured
+- Automatic bucket creation if it doesn't exist
+- Botocore configuration for reliability:
+  * 5s connect timeout
+  * 30s read timeout
+  * 3 retry attempts
+
+================================================================================
+                              FLASK DASHBOARD
+================================================================================
+
+WEB INTERFACE (flask-ui/)
+--------------------------------------------------------------------------------
+Three main pages with professional styling:
+
+1. DASHBOARD (/)
+   - Real-time metrics display:
+     * Total comments received
+     * Total processed count
+     * Processing speed (msg/sec)
+     * Similarities found
+     * Per-consumer throughput
+   - Auto-refresh every 3 seconds
+   - System information panel
+
+2. SPAM DETECTION (/spammers)
+   - Lists users with high similarity rates
+   - Configurable threshold parameter
+   - Shows total comments and similar pairs per user
+   - Calculates similarity rate: pairs / possible_pairs
+
+3. SIMILAR COMMENTS (/similar-comments)
+   - Displays pairs of similar comments
+   - Shows actual comment text from S3
+   - Similarity score visualization
+   - User ID information for each comment
+
+REST API ENDPOINTS
+--------------------------------------------------------------------------------
+- GET /api/metrics: Aggregated system metrics
+- GET /api/spammers: Users with high similarity rates
+- GET /api/consumer-stats: Per-consumer performance
+- GET /api/similar-comments: Similar document pairs with text
+- GET /api/top-users: Most active users
+- GET /api/comments/<user_id>: User's comments from S3
+
+================================================================================
+                              CONFIGURATION
+================================================================================
+
+ALGORITHM PARAMETERS (shared/config.py)
+--------------------------------------------------------------------------------
+- SHINGLE_SIZE: 1 (word-level shingles)
+- NUM_HASHES: 60 (MinHash signature length)
+- LSH_BANDS: 3 (number of bands)
+- SIMILARITY_THRESHOLD: 0.15 (minimum Jaccard to store)
+- PRIME: 2147483647 (for hash function modulo)
+
+KAFKA PARAMETERS
+--------------------------------------------------------------------------------
+- BATCH_SIZE: 16384 (producer batch size)
+- BUFFER_MEMORY: 33554432 (32MB producer buffer)
+- LINGER_MS: 100 (batch wait time)
+- MAX_POLL_RECORDS: 100 (consumer batch size)
+- FETCH_MIN_BYTES: 1024 (min bytes to fetch)
+- FETCH_MAX_WAIT_MS: 500 (max fetch wait)
+
+MEMORY MANAGEMENT
+--------------------------------------------------------------------------------
+- SHINGLE_DICT_MAX_SIZE: 10000 (max cached shinglings)
+- SEEN_PAIRS_MAX_SIZE: 50000 (max cached pairs)
+- Cleanup triggered every 500 messages
+- Removes oldest 25% when limits exceeded
+
+================================================================================
+                              TESTING
+================================================================================
+
+TEST SUITE (tests/test_lsh.py)
+--------------------------------------------------------------------------------
+Comprehensive unit tests covering:
+
+1. TestPreprocess
+   - Lowercase conversion
+   - @mention removal
+   - URL removal
+   - Punctuation removal
+   - Whitespace normalization
+   - Short text filtering
+   - Non-string handling
+
+2. TestShingling
+   - K-shingle generation count
+   - Deterministic output
+   - Different k values
+
+3. TestProcessComment
+   - Full pipeline integration
+   - Short text filtering
+
+4. TestMinHash
+   - Hash parameter generation
+   - Signature consistency
+   - Signature length validation
+
+5. TestLSHIndex
+   - Bucket population
+   - Candidate pair detection
+   - Negative case handling
+
+6. TestJaccardSimilarity
+   - Identical sets (1.0)
+   - Disjoint sets (0.0)
+   - Partial overlap
+   - Empty set handling
+
+7. TestComputeTruePairs
+   - Above threshold detection
+   - Below threshold filtering
+   - Multiple pair handling
+
+================================================================================
+                              KEY FEATURES SUMMARY
+================================================================================
+
+1. HIGH AVAILABILITY
+   - 2 Kafka brokers with replication
+   - MIN_ISR = 1 for fault tolerance
+   - 3 partitions for load distribution
+
+2. PARALLEL PROCESSING
+   - 3 consumer instances
+   - Automatic partition assignment
+   - Scalable via docker-compose --scale
+
+3. AT-LEAST-ONCE PROCESSING
+   - Manual offset commit after each message
+   - No data loss on consumer crash
+   - Possible duplicates handled by DB constraints
+
+4. LOCAL SIMILARITY (SPAM DETECTION)
+   - Messages keyed by userID
+   - Same-partition processing for same user
+   - Detects cross-article spam
+
+5. MEMORY MANAGEMENT
+   - Bounded shingle dictionary (10K entries)
+   - Bounded seen pairs set (50K entries)
+   - Periodic garbage collection
+
+6. MONITORING
+   - Real-time throughput metrics
+   - Per-consumer statistics
+   - Kafka-UI for cluster inspection
+   - Flask dashboard for metrics
+
+7. DATA DURABILITY
+   - SQLite for similarity results
+   - S3 for raw document storage
+   - Kafka topic replication
+
+8. CONFIGURATION FLEXIBILITY
+   - Environment variables for all settings
+   - Configurable algorithm parameters
+   - Optional S3 integration
+
+================================================================================
+                              PROJECT STRUCTURE
+================================================================================
+
+Kafka-document-streaming/
+├── docker-compose.yml       # Full system orchestration
+├── requirements.txt         # Python dependencies
+├── pyproject.toml          # Project metadata
+│
+├── producer/                # CSV to Kafka streaming
+│   ├── main.py             # Producer implementation
+│   ├── Dockerfile
+│   └── __init__.py
+│
+├── consumer/                # Kafka consumer with LSH
+│   ├── consumer.py         # Main consumer logic
+│   ├── Dockerfile
+│   └── __init__.py
+│
+├── lsh/                     # Locality Sensitive Hashing
+│   ├── lsh_index.py        # LSH banding implementation
+│   ├── minhash.py          # MinHash signature generation
+│   ├── preprocess.py       # Text preprocessing
+│   ├── similarity.py       # Jaccard similarity (tests)
+│   └── __init__.py
+│
+├── shared/
+│   ├── config.py           # Configuration parameters
+│   ├── s3_config.py        # AWS S3 settings
+│   └── s3_writer.py        # S3 document uploader
+│
+├── database/
+│   ├── database.py         # SQLite operations
+│   └── __init__.py
+│
+├── flask-ui/                # Web dashboard
+│   ├── app.py              # Flask application
+│   ├── templates/          # HTML templates
+│   │   ├── dashboard.html
+│   │   ├── spammers.html
+│   │   └── similar-comments.html
+│   ├── static/
+│   │   └── style.css      # Professional styling
+│   └── Dockerfile
+│
+├── data/                    # Data directory
+│   ├── nyt-comments-part0.csv  # Sample dataset
+│   ├── test-spam-dataset.csv    # Spam test data
+│   └── similarity.db       # SQLite database
+│
+└── tests/
+    ├── test_lsh.py        # LSH algorithm tests
+    ├── test_database.py   # Database tests
+    └── __init__.py
+
+================================================================================
+                              TECHNOLOGIES USED
+================================================================================
+
+- Apache Kafka 7.5.0: Distributed streaming platform
+- Python 3.x: Main implementation language
+- SQLite: Local database for results
+- AWS S3: Cloud document storage (optional)
+- Flask: Web dashboard framework
+- Docker/Docker Compose: Container orchestration
+- MurmurHash3 (mmh3): Fast hashing for LSH
+- boto3: AWS SDK for Python
+- Confluent Kafka Python: Kafka client library
+
+================================================================================
+                              HOW TO RUN
+================================================================================
+
+1. Configure AWS credentials (optional for S3):
+   cp .template .env
+   # Edit .env with AWS credentials
+
+2. Start all services:
+   docker-compose up -d
+
+3. Run with multiple consumers:
+   docker-compose up -d --scale consumer=3
+
+4. View services:
+   - Kafka UI: http://localhost:8080
+   - Flask Dashboard: http://localhost:5000
+
+5. Check results:
+   sqlite3 data/similarity.db "SELECT COUNT(*) FROM similarities;"
+
+6. Stop services:
+   docker-compose down
+
+================================================================================

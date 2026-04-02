@@ -18,13 +18,12 @@ from shared.config import (
 )
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | PRODUCER | %(levelname)s | %(message)s"
+    level=logging.INFO, format="%(asctime)s | PRODUCER | %(levelname)s | %(message)s"
 )
 
 
 def json_serializer(data: dict[str, Any]) -> bytes:
-    return json.dumps(data).encode('utf-8')
+    return json.dumps(data).encode("utf-8")
 
 
 CSV_FILE: str = os.getenv("CSV_FILE", "data/nyt-comments-sorted.csv")
@@ -57,14 +56,11 @@ def main():
                 "id": int(row["commentID"]),
                 "text": row["commentBody"],
                 "user_id": str(row["userID"]),
+                "produced_at": time.time(),
             }
 
             try:
-                producer.send(
-                    TOPIC_NAME,
-                    key=doc["user_id"].encode("utf-8"),
-                    value=doc
-                )
+                producer.send(TOPIC_NAME, key=doc["user_id"].encode("utf-8"), value=doc)
 
                 if i % 1000 == 0:
                     logging.info(f"Sent {i} documents...")
@@ -89,7 +85,7 @@ def wait_for_kafka():
             logging.info("Kafka is ready!")
             return
         except NoBrokersAvailable:
-            logging.warning(f"Kafka not ready yet... retry {i+1}/20")
+            logging.warning(f"Kafka not ready yet... retry {i + 1}/20")
             time.sleep(2)
 
     logging.error("Kafka never became available")
