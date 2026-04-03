@@ -118,7 +118,8 @@ def insert_similarity(doc1, doc2, sim, consumer_id):
 
     doc1, doc2 = sorted((doc1, doc2))
 
-    unique_id = f"{consumer_id}_{doc1}_{doc2}_{int(time.time() * 1000000)}"
+    import uuid
+    unique_id = f"{consumer_id}_{doc1}_{doc2}_{uuid.uuid4().hex[:8]}"
 
     cursor.execute(
         """
