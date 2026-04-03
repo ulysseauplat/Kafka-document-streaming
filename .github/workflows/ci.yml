@@ -62,6 +62,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Initialize database schema
+        run: python -c "from database.database import init_db; init_db()"
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: similarity_db
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+
       - name: Run tests
         run: pytest tests/ -v --tb=short
         env:

@@ -10,6 +10,12 @@ DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def init_database():
+    from database.database import init_db
+    init_db()
+
+
 @pytest.fixture
 def db_connection():
     conn = psycopg2.connect(
