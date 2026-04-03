@@ -118,8 +118,7 @@ def insert_similarity(doc1, doc2, sim, consumer_id):
 
     doc1, doc2 = sorted((doc1, doc2))
 
-    import uuid
-    unique_id = f"{consumer_id}_{doc1}_{doc2}_{uuid.uuid4().hex[:8]}"
+    unique_id = f"{consumer_id}_{doc1}_{doc2}"
 
     cursor.execute(
         """
@@ -229,14 +228,17 @@ def update_user_stats_for_similarity(doc1, doc2):
         user_id = result1[0]
 
         cursor.execute(
-            "SELECT total_comments, similar_pairs FROM user_stats WHERE user_id = %s",
-            (user_id,)
+            "SELECT total_comments, similar_pairs FROM user_stats WHERE user_id = %s", (user_id,)
         )
         row = cursor.fetchone()
         if row:
             total_comments = row[0]
             similar_pairs = row[1] + 1
-            similarity_rate = similar_pairs / (total_comments * (total_comments - 1) / 2) if total_comments > 1 else 0
+            similarity_rate = (
+                similar_pairs / (total_comments * (total_comments - 1) / 2)
+                if total_comments > 1
+                else 0
+            )
 
             cursor.execute(
                 """
@@ -437,6 +439,7 @@ def batch_update_user_stats_comments(user_ids: list[str]):
     conn = get_connection()
     cursor = conn.cursor()
     from collections import Counter
+
     counts = Counter(user_ids)
     for user_id, count in counts.items():
         cursor.execute(
