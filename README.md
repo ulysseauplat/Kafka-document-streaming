@@ -35,28 +35,30 @@ The system uses **Kafka streaming** to process comments in real-time, **LSH** fo
                                  │
                     ┌────────────┴────────────┐
                     ▼                         ▼
-           ┌───────────────┐          ┌───────────────┐
-           │    SQLite     │          │      S3       │
-           │   Database    │          │   Data Lake   │
-           │               │          │               │
-           │• similarities │          │• Raw comment  │
-           │• doc_users   │          │  documents    │
-           │• user_stats  │          └───────┬───────┘
-           │• consumer_   │                  │
-           │  stats       │                  │
-           └───────┬───────┘                  │
-                   │                         │
-                   ▼                         ▼
+            ┌───────────────┐          ┌───────────────┐
+            │  PostgreSQL   │          │      S3       │
+            │   Database    │          │   Data Lake   │
+            │               │          │               │
+            │• similarities │          │• Raw comment  │
+            │• doc_users   │          │  documents    │
+            │• user_stats  │          └───────┬───────┘
+            │• consumer_   │                  │
+            │  stats       │                  │
+            │• system_     │                  │
+            │  stats       │                  │
+            └───────┬───────┘                  │
+                    │                         │
+                    ▼                         ▼
            ┌───────────────────────────────────────┐
            │              Flask UI                  │
            │             (Port 5000)               │
            │                                        │
-           │  Metrics from SQLite                  │
+            │  Metrics from PostgreSQL                  │
            │  Comments display from S3              │
            └───────────────────────────────────────┘
 ```
 
-### SQLite Database Tables
+### PostgreSQL Database Tables
 
 | Table | Columns | Description |
 |-------|---------|-------------|
@@ -67,6 +69,26 @@ The system uses **Kafka streaming** to process comments in real-time, **LSH** fo
 
 ## Key Features
 
+### Batch Processing for Performance
+To maximize throughput, the consumer uses **batch processing** for both Kafka commits and database writes:
+
+- **Kafka commits**: Offsets are committed every 100 messages or 5 seconds (whichever comes first)
+- **Database writes**: Operations are buffered and flushed every 100 messages or 10 seconds (whichever comes first)
+- **Batch DB functions**: Instead of individual INSERT/UPDATE per message, we use bulk operations:
+  - `batch_track_doc_users()` - Bulk insert document-user mappings
+  - `batch_insert_similarities()` - Bulk insert similar pairs
+  - `batch_update_user_stats_comments()` - Bulk increment comment counts
+  - `batch_update_user_stats_similarities()` - Bulk update similarity stats
+
+
+### PostgreSQL for Concurrent Access
+The system uses **PostgreSQL** instead of SQLite to support multiple concurrent consumers:
+- PostgreSQL handles concurrent writes from multiple consumer instances
+- Row-level locking ensures data consistency
+- Connection pooling-ready design
+
+SQLite would cause locking issues with multiple consumers writing simultaneously.
+
 ### High Availability
 - **2 Kafka brokers** with replication factor 2
 - **MIN_ISR = 1**: Topic continues working with only 1 broker
@@ -76,10 +98,6 @@ The system uses **Kafka streaming** to process comments in real-time, **LSH** fo
 - Multiple consumer instances process partitions concurrently
 - Kafka automatically distributes partitions among consumers
 
-```bash
-# Run with 3 consumers
-docker-compose up -d --scale consumer=3
-```
 
 ### At-Least-Once Processing
 - **Manual offset commit** after each message batch
@@ -93,8 +111,9 @@ docker-compose up -d --scale consumer=3
 
 ### Memory Management
 The consumer limits memory usage by periodically cleaning up old data:
-- Keeps ~10,000 recent users' shinglings
-- Keeps ~50,000 recent similarity pairs
+- Keeps ~10,000 recent shinglings (configurable via `SHINGLE_DICT_MAX_SIZE`)
+- Keeps ~50,000 recent similarity pairs (configurable via `SEEN_PAIRS_MAX_SIZE`)
+- LSH index is cleared when switching to a new user (reduces memory overhead)
 - Old entries are removed to prevent memory exhaustion
 
 **Why this works for spam detection**: Kafka streams are partitioned by `userID` (author key). Since an author typically writes far fewer than 10,000 comments, spammers will be fully contained within this window and won't be missed.
@@ -106,7 +125,7 @@ The consumer limits memory usage by periodically cleaning up old data:
 
 ### Dashboard Metrics Explained
 
-The Flask UI displays real-time metrics sourced from SQLite database:
+The Flask UI displays real-time metrics sourced from PostgreSQL database:
 
 | Metric | Description |
 |--------|-------------|
@@ -127,7 +146,7 @@ For a user with n comments:
 
 The Flask dashboard reads data from two sources:
 
-- **Metrics & Analytics**: Computed from SQLite database
+- **Metrics & Analytics**: Computed from PostgreSQL database
 - **Comment Text**: Retrieved from S3 data lake
 
 Access the Flask UI at `http://localhost:5000`:
@@ -154,7 +173,7 @@ This approach avoids comparing every document pair (O(n²)) by only comparing do
 
 ### Test Dataset
 
-For testing purposes, a small sample CSV file (`nyt-comments-part0.csv`) is included in the `data/` directory.
+For testing purposes, a sample CSV file (`test-spam-dataset.csv`) is included in the `data/` directory.
 
 ### AWS Credentials
 
@@ -171,16 +190,11 @@ AWS_REGION=eu-north-1
 S3_BUCKET=your-bucket-name
 ```
 
-The S3 writer is enabled by default - if AWS credentials are not set, S3 writes are skipped but the system continues to function with SQLite only.
+The S3 writer is enabled by default - if AWS credentials are not set, S3 writes are skipped but the system continues to function with PostgreSQL only.
 
 ### Run All Services
 ```bash
-docker-compose up -d
-```
-
-### Run with Multiple Consumers
-```bash
-docker-compose up -d --scale consumer=3
+sudo docker-compose up -d --build
 ```
 
 ### Check Status
@@ -200,7 +214,8 @@ docker logs -f consumer-1
 
 ### View Results
 ```bash
-sqlite3 data/similarity.db "SELECT COUNT(*) FROM similarities;"
+# Query PostgreSQL database
+docker exec -it postgres psql -U postgres -d similarity_db -c "SELECT COUNT(*) FROM similarities;"
 ```
 
 ### Stop Everything
@@ -278,11 +293,10 @@ Kafka-document-streaming/
 │   └── s3_writer.py        # S3 document uploader
 │
 ├── database/
-│   └── database.py         # SQLite storage for similarities & user stats
+│   └── database.py         # PostgreSQL storage for similarities & user stats
 │
 ├── data/
-│   ├── nyt-comments-part0.csv  # NYT comments dataset
-│   └── similarity.db       # Output: similar pairs found
+│   └── test-spam-dataset.csv  # Sample spam dataset for testing
 │
 └── tests/
     ├── test_lsh.py

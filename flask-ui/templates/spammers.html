@@ -27,6 +27,8 @@
         <div class="threshold-selector">
             <label for="threshold">Similarity Threshold (%):</label>
             <input type="number" id="threshold" min="0" max="100" value="10" step="1">
+            <label for="min-comments">Min Comments:</label>
+            <input type="number" id="min-comments" min="0" max="1000" value="10" step="1">
             <button id="apply-threshold" class="apply-btn">Apply</button>
         </div>
 
@@ -68,9 +70,9 @@
     </footer>
 
     <script>
-        async function fetchSpammers(threshold) {
+        async function fetchSpammers(threshold, minComments) {
             try {
-                const response = await fetch(`/api/spammers?threshold=${threshold}`);
+                const response = await fetch(`/api/spammers?threshold=${threshold}&min_comments=${minComments}`);
                 const data = await response.json();
 
                 const tbody = document.getElementById("spammers-body");
@@ -123,7 +125,7 @@
                         div.className = "comment-card similar";
                         div.innerHTML = `
                             <p class="comment-id">ID: ${comment.id}</p>
-                            <p class="comment-text">${comment.text}</p>
+                            <p class="comment-text">${escapeHtml(comment.text)}</p>
                         `;
                         similarDiv.appendChild(div);
                     });
@@ -138,7 +140,7 @@
                         div.className = "comment-card";
                         div.innerHTML = `
                             <p class="comment-id">ID: ${comment.id}</p>
-                            <p class="comment-text">${comment.text}</p>
+                            <p class="comment-text">${escapeHtml(comment.text)}</p>
                         `;
                         otherDiv.appendChild(div);
                     });
@@ -173,16 +175,28 @@
         };
 
         document.getElementById("apply-threshold").addEventListener("click", function() {
-            fetchSpammers(document.getElementById("threshold").value);
+            const threshold = document.getElementById("threshold").value;
+            const minComments = document.getElementById("min-comments").value;
+            fetchSpammers(threshold, minComments);
         });
 
         document.getElementById("threshold").addEventListener("keypress", function(e) {
             if (e.key === "Enter") {
-                fetchSpammers(this.value);
+                const threshold = this.value;
+                const minComments = document.getElementById("min-comments").value;
+                fetchSpammers(threshold, minComments);
             }
         });
 
-        fetchSpammers(10);
+        document.getElementById("min-comments").addEventListener("keypress", function(e) {
+            if (e.key === "Enter") {
+                const threshold = document.getElementById("threshold").value;
+                const minComments = this.value;
+                fetchSpammers(threshold, minComments);
+            }
+        });
+
+        fetchSpammers(10, 10);
     </script>
 </body>
 </html>

@@ -25,12 +25,8 @@
                 <p class="metric-value" id="total-comments">0</p>
             </div>
             <div class="metric-card">
-                <h3>Total Processed</h3>
-                <p class="metric-value" id="total-processed">0</p>
-            </div>
-            <div class="metric-card">
-                <h3>Total Speed</h3>
-                <p class="metric-value" id="total-speed">0</p>
+                <h3>Total Throughput</h3>
+                <p class="metric-value" id="total-throughput">0</p>
                 <p class="metric-unit">msg/sec</p>
             </div>
             <div class="metric-card">
@@ -85,7 +81,7 @@
                 <li><strong>Producer:</strong> Streams CSV documents to Kafka</li>
                 <li><strong>Consumer:</strong> Processes messages with LSH algorithm</li>
                 <li><strong>S3:</strong> Raw document storage</li>
-                <li><strong>SQLite:</strong> Similarity results storage</li>
+                <li><strong>PostgreSQL:</strong> Similarity results storage</li>
             </ul>
         </div>
     </main>
@@ -101,11 +97,9 @@
                 const data = await response.json();
 
                 document.getElementById("total-comments").textContent = 
-                    data.total_comments.toLocaleString();
-                document.getElementById("total-processed").textContent = 
                     data.total_processed.toLocaleString();
-                document.getElementById("total-speed").textContent = 
-                    data.total_speed.toFixed(2);
+                document.getElementById("total-throughput").textContent = 
+                    data.total_throughput.toFixed(2);
                 document.getElementById("total-similarities").textContent = 
                     data.total_similarities.toLocaleString();
 

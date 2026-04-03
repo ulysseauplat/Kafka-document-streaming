@@ -23,3 +23,12 @@ class LSHIndex:
                 pair: tuple[int, int] = (min(existing_idx, comment_idx), max(existing_idx, comment_idx))
                 self.candidate_pairs.add(pair)
             bucket.append(comment_idx)
+
+    def clear_candidates(self) -> None:
+        """Clear candidate pairs when switching to a new user."""
+        self.candidate_pairs.clear()
+
+    def clear_all(self) -> None:
+        """Clear all state including buckets and candidates."""
+        self.buckets = [defaultdict(list) for _ in range(self.b)]
+        self.candidate_pairs.clear()

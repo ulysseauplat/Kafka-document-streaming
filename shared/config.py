@@ -1,6 +1,6 @@
 import os
 
-KAFKA_BROKER = os.getenv("KAFKA_BROKER", "kafka:9092")
+KAFKA_BROKER = os.getenv("KAFKA_BROKER", "kafka-0:9092,kafka-1:9093")
 TOPIC_NAME = "documents"
 PRIME = 2147483647
 SHINGLE_SIZE = 1

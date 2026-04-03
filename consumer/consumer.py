@@ -8,13 +8,13 @@ from typing import Any, Optional
 from kafka import KafkaConsumer
 
 from database.database import (
-    init_db,
-    insert_similarity,
-    recalculate_user_stats,
-    track_doc_user,
+    batch_insert_similarities,
+    batch_track_doc_users,
+    batch_update_user_stats_comments,
+    batch_update_user_stats_similarities,
+    sync_user_stats_from_doc_users,
     update_consumer_stats,
     update_system_latency,
-    update_user_stats_comment,
 )
 from lsh.lsh_index import LSHIndex
 from lsh.minhash import compute_minhash_signature, generate_hash_params
@@ -40,6 +40,17 @@ logging.basicConfig(
 )
 
 CONSUMER_ID: int = int(os.getenv("CONSUMER_ID", "1"))
+
+# ---------------------------
+# TUNING CONSTANTS
+# ---------------------------
+COMMIT_INTERVAL = 100
+COMMIT_TIME_INTERVAL_SEC = 5
+
+DB_FLUSH_INTERVAL = 100
+DB_FLUSH_TIME_SEC = 10
+METRICS_FLUSH_INTERVAL = 200
+LOG_SAMPLE_INTERVAL = 200
 
 
 def json_deserializer(data: bytes) -> dict[str, Any]:
@@ -75,9 +86,7 @@ def wait_for_kafka():
 def main():
     logging.info("Consumer starting...")
 
-    init_db()
-    recalculate_user_stats()
-
+    sync_user_stats_from_doc_users()
     s3_writer = S3Writer()
 
     consumer = KafkaConsumer(
@@ -105,29 +114,62 @@ def main():
     shingle_dict: dict[int, set[int]] = {}
     seen_pairs: set[tuple[int, int]] = set()
 
-    processed_count: int = 0
-    similarity_count: int = 0
-    cleanup_counter: int = 0
+    # ---------------------------
+    # STATE
+    # ---------------------------
+    processed_count = 0
+    similarity_count = 0
+    total_latency_ms = 0.0
+    min_latency_ms = float('inf')
+    max_latency_ms = 0.0
+    latency_count = 0
 
-    latency_total_ms: float = 0
-    latency_count: int = 0
-    latency_min_ms: float = float("inf")
-    latency_max_ms: float = 0
-
-    start_time: float = time.time()
-    last_log_time: float = time.time()
-    last_processed: int = 0
-    gc_interval: int = 500
+    last_commit_time = time.time()
+    last_metrics_time = time.time()
+    last_flush_time = time.time()
+    last_processed_count = 0
+    last_total_latency = 0.0
+    last_min_latency = float('inf')
+    last_max_latency = 0.0
+    last_latency_count = 0
 
     current_user: Optional[str] = None
+
+    # ---------------------------
+    # BATCH BUFFERS
+    # ---------------------------
+    doc_user_buffer = []
+    similarity_buffer = []
+    user_stats_buffer = []
+    similarity_user_buffer = []
+
+    def flush_db_buffers():
+        nonlocal doc_user_buffer, similarity_buffer, user_stats_buffer, similarity_user_buffer
+
+        if doc_user_buffer:
+            batch_track_doc_users(doc_user_buffer)
+
+        if similarity_buffer:
+            batch_insert_similarities(similarity_buffer, CONSUMER_ID)
+
+        if user_stats_buffer:
+            batch_update_user_stats_comments(user_stats_buffer)
+
+        if similarity_user_buffer:
+            batch_update_user_stats_similarities(similarity_user_buffer, CONSUMER_ID)
+
+        doc_user_buffer.clear()
+        similarity_buffer.clear()
+        user_stats_buffer.clear()
+        similarity_user_buffer.clear()
 
     for message in consumer:
         if message is None:
             continue
 
         msg_start = time.time()
-
         doc = message.value
+
         if not doc:
             continue
 
@@ -136,31 +178,38 @@ def main():
         user_id = doc.get("user_id")
         produced_at = doc.get("produced_at")
 
+        # ---------------------------
+        # LATENCY TRACKING
+        # ---------------------------
         if produced_at:
             latency_ms = (msg_start - produced_at) * 1000
-            latency_total_ms += latency_ms
-            latency_count += 1
-            if latency_ms < latency_min_ms:
-                latency_min_ms = latency_ms
-            if latency_ms > latency_max_ms:
-                latency_max_ms = latency_ms
+            update_system_latency(latency_ms, 1, latency_ms, latency_ms)
 
+            total_latency_ms += latency_ms
+            min_latency_ms = min(min_latency_ms, latency_ms)
+            max_latency_ms = max(max_latency_ms, latency_ms)
+            latency_count += 1
+
+        # ---------------------------
+        # USER SWITCH RESET
+        # ---------------------------
         if current_user is not None and user_id != current_user:
             shingle_dict.clear()
-            lsh = LSHIndex(r, n_hash // r)
+            lsh.clear_all()
             seen_pairs.clear()
 
         current_user = user_id
 
-        update_user_stats_comment(user_id)
-        s3_writer.add(doc, user_id)
-        track_doc_user(doc_id, user_id)
+        # ---------------------------
+        # BUFFER DB OPERATIONS
+        # ---------------------------
+        user_stats_buffer.append(user_id)
+        doc_user_buffer.append((doc_id, user_id))
 
-        logging.info(f"Received doc id={doc_id}")
+        s3_writer.add(doc, user_id)
 
         shingles = process_comment(text, k)
         if not shingles:
-            logging.warning(f"Empty shingles for doc id={doc_id}")
             continue
 
         shingle_dict[doc_id] = shingles
@@ -169,6 +218,9 @@ def main():
         signature = compute_minhash_signature(shingles, hash_params, PRIME)
         lsh.insert(signature, doc_id)
 
+        # ---------------------------
+        # LSH SIMILARITY CHECK
+        # ---------------------------
         for i, j in lsh.candidate_pairs:
             pair = tuple(sorted((i, j)))
 
@@ -181,69 +233,80 @@ def main():
                 sim = jaccard(shingle_dict[i], shingle_dict[j])
 
                 if sim >= SIMILARITY_THRESHOLD:
-                    try:
-                        insert_similarity(i, j, sim)
-                        similarity_count += 1
+                    similarity_buffer.append((i, j, sim))
+                    similarity_count += 1
+                    similarity_user_buffer.append((i, j))
 
-                        logging.info(f"SIMILARITY FOUND: {i}-{j} = {sim:.2f}")
+        # ---------------------------
+        # LOGGING (throttled)
+        # ---------------------------
+        if processed_count % LOG_SAMPLE_INTERVAL == 0:
+            logging.info(
+                f"PROGRESS | processed={processed_count} "
+                f"similarities={similarity_count}"
+            )
 
-                    except Exception as e:
-                        logging.error(f"DB insert failed {i}-{j}: {e}")
-
-        msg_duration = time.time() - msg_start
-
-        if msg_duration > 1.0:
-            logging.warning(f"SLOW MESSAGE id={doc_id} took {msg_duration:.3f}s")
-
+        # ---------------------------
+        # FLUSH DB BATCHES (count or time based)
+        # ---------------------------
         now = time.time()
+        if processed_count % DB_FLUSH_INTERVAL == 0 or now - last_flush_time >= DB_FLUSH_TIME_SEC:
+            flush_db_buffers()
+            last_flush_time = now
 
-        if now - last_log_time >= 10:
-            interval_processed = processed_count - last_processed
-            interval_time = now - last_log_time
-
+        # ---------------------------
+        # UPDATE CONSUMER STATS
+        # ---------------------------
+        if now - last_metrics_time >= 10:
+            interval_processed = processed_count - last_processed_count
+            interval_time = now - last_metrics_time
             throughput = interval_processed / interval_time if interval_time > 0 else 0
 
-            similarity_rate = (
-                (similarity_count / processed_count) * 100 if processed_count > 0 else 0
-            )
+            interval_latency = total_latency_ms - last_total_latency
+            interval_count = latency_count - last_latency_count
+            avg_latency = interval_latency / interval_count if interval_count > 0 else 0
 
-            avg_latency = latency_total_ms / latency_count if latency_count > 0 else 0
-            min_latency = latency_min_ms if latency_min_ms != float("inf") else 0
+            logging.info(f"STATS | consumer={CONSUMER_ID} throughput={throughput:.2f} processed={processed_count} latency={avg_latency:.2f}ms")
 
-            logging.info(
-                f"METRICS | throughput={throughput:.2f} msg/s | "
-                f"processed={processed_count} | "
-                f"similarities={similarity_count} | "
-                f"similarity_rate={similarity_rate:.2f}% | "
-                f"latency avg={avg_latency:.2f}ms min={min_latency:.2f}ms max={latency_max_ms:.2f}ms"
-            )
+            try:
+                update_consumer_stats(
+                    CONSUMER_ID,
+                    throughput,
+                    processed_count,
+                    avg_latency,
+                    last_min_latency if last_min_latency != float('inf') else 0,
+                    last_max_latency,
+                    interval_latency,
+                    interval_count,
+                )
+            except Exception as e:
+                logging.error(f"update_consumer_stats failed: {e}")
 
-            update_consumer_stats(
-                CONSUMER_ID,
-                throughput,
-                processed_count,
-                avg_latency,
-                min_latency,
-                latency_max_ms,
-                latency_total_ms,
-                latency_count,
-            )
+            last_metrics_time = now
+            last_processed_count = processed_count
+            last_total_latency = total_latency_ms
+            last_min_latency = min_latency_ms
+            last_max_latency = max_latency_ms
+            last_latency_count = latency_count
 
-            if latency_count > 0:
-                update_system_latency(latency_total_ms, latency_count, min_latency, latency_max_ms)
+        # ---------------------------
+        # COMMIT STRATEGY (FIXED)
+        # ---------------------------
+        now = time.time()
+        if (
+            processed_count % COMMIT_INTERVAL == 0
+            or now - last_commit_time >= COMMIT_TIME_INTERVAL_SEC
+        ):
+            try:
+                consumer.commit()
+                last_commit_time = now
+            except Exception as e:
+                logging.error(f"Kafka commit failed: {e}")
 
-            latency_total_ms = 0
-            latency_count = 0
-            latency_min_ms = float("inf")
-            latency_max_ms = 0
-
-            last_log_time = now
-            last_processed = processed_count
-
-        cleanup_counter += 1
-        if cleanup_counter >= gc_interval:
-            cleanup_counter = 0
-
+        # ---------------------------
+        # MEMORY CLEANUP (unchanged logic)
+        # ---------------------------
+        if processed_count % 500 == 0:
             if len(shingle_dict) > SHINGLE_DICT_MAX_SIZE:
                 keys_to_remove = sorted(shingle_dict.keys())[: len(shingle_dict) // 4]
                 for key in keys_to_remove:
@@ -255,22 +318,17 @@ def main():
                     seen_pairs.discard(p)
 
             gc.collect()
-            logging.info(
-                f"MEMORY CLEANUP | shingle_dict size={len(shingle_dict)} | seen_pairs size={len(seen_pairs)}"
-            )
 
-        consumer.commit()
+    # ---------------------------
+    # FINAL FLUSH
+    # ---------------------------
+    flush_db_buffers()
+    consumer.commit()
 
     s3_writer.close()
 
-    total_time = time.time() - start_time
-
     logging.info(
-        f"Consumer stopped | "
-        f"processed={processed_count} | "
-        f"similarities={similarity_count} | "
-        f"runtime={total_time:.2f}s | "
-        f"avg_throughput={processed_count / total_time:.2f} msg/s"
+        f"Consumer stopped | processed={processed_count} | similarities={similarity_count}"
     )
 
 
