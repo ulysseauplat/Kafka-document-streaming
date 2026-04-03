@@ -13,6 +13,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 @pytest.fixture(scope="session", autouse=True)
 def init_database():
     from database.database import init_db
+
     init_db()
 
 
@@ -57,7 +58,10 @@ class TestInsertSimilarity:
         insert_similarity(doc_id_1, doc_id_2, 0.85, 1)
 
         cursor = db_connection.cursor()
-        cursor.execute("SELECT doc_id_1, doc_id_2, similarity FROM similarities WHERE doc_id_1 = %s OR doc_id_2 = %s", (doc_id_2, doc_id_2))
+        cursor.execute(
+            "SELECT doc_id_1, doc_id_2, similarity FROM similarities WHERE doc_id_1 = %s OR doc_id_2 = %s",
+            (doc_id_1, doc_id_1),
+        )
         row = cursor.fetchone()
         assert row is not None, "Similarity was not inserted"
         assert row[2] == 0.85
@@ -75,7 +79,10 @@ class TestInsertSimilarity:
         insert_similarity(doc_id_2, doc_id_1, 0.75, 1)
 
         cursor = db_connection.cursor()
-        cursor.execute("SELECT doc_id_1, doc_id_2 FROM similarities WHERE doc_id_2 = %s", (doc_id_2,))
+        cursor.execute(
+            "SELECT doc_id_1, doc_id_2 FROM similarities WHERE doc_id_1 = %s OR doc_id_2 = %s",
+            (doc_id_2, doc_id_2),
+        )
         row = cursor.fetchone()
         assert row is not None
         assert row[0] == doc_id_2, "Doc IDs should be sorted (smaller first)"
@@ -95,6 +102,9 @@ class TestInsertSimilarity:
         insert_similarity(doc_id_1, doc_id_2, 0.90, 1)
 
         cursor = db_connection.cursor()
-        cursor.execute("SELECT COUNT(*) FROM similarities WHERE doc_id_1 = %s OR doc_id_2 = %s", (doc_id_2, doc_id_2))
+        cursor.execute(
+            "SELECT COUNT(*) FROM similarities WHERE doc_id_1 = %s OR doc_id_2 = %s",
+            (doc_id_2, doc_id_2),
+        )
         count = cursor.fetchone()[0]
         assert count == 1, "Duplicate pair should not be inserted"
